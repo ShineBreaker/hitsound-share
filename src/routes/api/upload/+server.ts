@@ -37,32 +37,10 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 	if (!validated.ok) return json({ error: validated.error }, { status: 400 });
 	const m = validated.value;
 
-	// 懒清理：该用户超 24h 的 pending 包（失败不阻塞主流程）
-	await lazyCleanupPending(env, session.osuId).catch(() => 0);
+	// 懒清理：全站扫描超 24h 的 pending 包（他人弃单同样回收，防其 blobs 预插行占死水位）
+	await lazyCleanupPending(env).catch(() => 0);
 
-	// 每用户每日配额（含 pending）
-	const quota = await env.DB.prepare(
-		`SELECT COUNT(*) AS c FROM packages
-		 WHERE uploader_osu_id = ?1 AND created_at >= datetime('now', '-1 day')`
-	)
-		.bind(session.osuId)
-		.first<{ c: number }>();
-	if ((quota?.c ?? 0) >= PKGS_PER_DAY) {
-		return json({ error: 'daily_limit' }, { status: 429 });
-	}
-
-	// 全局存储水位（blobs 账本实时求和）
-	const gauge = await env.DB.prepare('SELECT COALESCE(SUM(size), 0) AS s FROM blobs').first<{
-		s: number;
-	}>();
-	if ((gauge?.s ?? 0) >= GLOBAL_CAP_BYTES) {
-		return json({ error: 'storage_full' }, { status: 507 });
-	}
-
-	// 建 pending 包 + files 行（path 服务端拆分；peaks JSON 序列化）
-	const packageId = crypto.randomUUID();
-	const logicalSize = m.entries.reduce((acc, e) => acc + e.size, 0);
-	// users 幂等落行（packages.uploader_osu_id 有外键；不依赖 callback 时序）
+	// users 幂等落行（packages.uploader_osu_id 有外键，须先行）
 	await env.DB.prepare(
 		`INSERT INTO users (osu_id, username, avatar_url)
 		 VALUES (?1, ?2, ?3)
@@ -70,15 +48,39 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 	)
 		.bind(session.osuId, session.username, session.avatarUrl)
 		.run();
-	await env.DB.prepare(
+
+	// 配额 + 全局水位合并为单条条件 INSERT（单语句原子，关闭并发 TOCTOU 窗口）：
+	// - 每用户 24h 内（含 pending）< 5 包
+	// - blobs 账本 SUM（含 pending 预插行，保守）+ visible 包 zip 总量 + 本包 logical_size < 8GB
+	const packageId = crypto.randomUUID();
+	const logicalSize = m.entries.reduce((acc, e) => acc + e.size, 0);
+	const ins = await env.DB.prepare(
 		`INSERT INTO packages (id, name, uploader_osu_id, size_bytes, logical_size, file_count, status)
-		 VALUES (?1, ?2, ?3, 0, ?4, ?5, 'pending')`
+		 SELECT ?1, ?2, ?3, 0, ?4, ?5, 'pending'
+		 WHERE (SELECT COUNT(*) FROM packages
+		        WHERE uploader_osu_id = ?3 AND created_at >= datetime('now', '-1 day')) < ?6
+		   AND ((SELECT COALESCE(SUM(size), 0) FROM blobs)
+		      + (SELECT COALESCE(SUM(size_bytes), 0) FROM packages WHERE status = 'visible')
+		      + ?4) < ?7`
 	)
-		.bind(packageId, m.name, session.osuId, logicalSize, m.entries.length)
+		.bind(packageId, m.name, session.osuId, logicalSize, m.entries.length, PKGS_PER_DAY, GLOBAL_CAP_BYTES)
 		.run();
+	if ((ins.meta?.changes ?? 0) === 0) {
+		// 闸门未过：复查区分原因，给出准确错误码（复查仅为报错，不再作为防线）
+		const quota = await env.DB.prepare(
+			`SELECT COUNT(*) AS c FROM packages
+			 WHERE uploader_osu_id = ?1 AND created_at >= datetime('now', '-1 day')`
+		)
+			.bind(session.osuId)
+			.first<{ c: number }>();
+		if ((quota?.c ?? 0) >= PKGS_PER_DAY) {
+			return json({ error: 'daily_limit' }, { status: 429 });
+		}
+		return json({ error: 'storage_full' }, { status: 507 });
+	}
 
 	// files.blob_hash 有外键 → blobs 行须先存在：manifest 阶段幂等插入（refcount=0），
-	// done 核验通过才累加；失败/清理路径按 refcount<=0 回收，跨包共享的行不受影响
+	// done 核验通过才通过对齐累加；失败/清理路径按 refcount<=0 回收，跨包共享的行不受影响
 	const byHash = new Map(m.entries.map((e) => [e.hash, e]));
 	for (const [hash, entry] of byHash) {
 		await env.DB.prepare(

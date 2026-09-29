@@ -1,7 +1,15 @@
 // 包删除治理（上传者删自己的 / 管理员删任意）：
-// D1 事务性清理（decrement refcount → 级联删 files/package）+ 归零 blob 与 zip 的 R2 对象删除。
-// pending 懒清理复用同一路径（pending 未 done 过，refcount 未加，decrement 天然归零不影响）
+// D1 事务性清理（对齐 refcount → 级联删 files/package）→ 归零 blob 与 zip 的 R2 对象删除。
+// pending 懒清理复用同一路径（对齐口径一致：refcount = 全库 visible 包对该 blob 的引用数）
 import type { Env } from './media';
+
+/** refcount 绝对对齐：置为全库 visible 包对该 hash 的引用数（幂等，可重放，自愈历史偏差） */
+export const ALIGN_REFCOUNT_SQL =
+	`UPDATE blobs SET refcount = (
+	   SELECT COUNT(*) FROM files f JOIN packages p ON p.id = f.package_id
+	   WHERE f.blob_hash = blobs.hash AND p.status = 'visible'
+	 )
+	 WHERE hash = ?1`;
 
 export interface PackageRow {
 	id: string;
@@ -25,12 +33,6 @@ export async function getPackage(db: Env['DB'], id: string): Promise<PackageRow 
 export async function purgePackage(env: Env, packageId: string): Promise<{ ok: true } | { error: string }> {
 	const { DB, HITSOUND_FILES } = env;
 
-	// 包状态决定 refcount 是否累加过（done 置 visible 时才累加）
-	const pkgRow = await DB.prepare('SELECT status FROM packages WHERE id = ?1')
-		.bind(packageId)
-		.first<{ status: string }>();
-	const pkg_status_visible = pkgRow?.status === 'visible';
-
 	// 1. 先取该包用到的 (hash, ext)——files 行马上要被级联删除，之后无从查起
 	const { results: blobRows } = await DB.prepare(
 		'SELECT DISTINCT blob_hash AS hash, format FROM files WHERE package_id = ?1'
@@ -38,21 +40,15 @@ export async function purgePackage(env: Env, packageId: string): Promise<{ ok: t
 		.bind(packageId)
 		.all<{ hash: string; format: string }>();
 
-	// 2. decrement 该包全部引用（子查询计数，参数绑定）。
-	//    pending 包的 refcount 从未累加过（done 才加），跳过 decrement 防多减
-	if (pkg_status_visible) {
-		await DB.prepare(
-			`UPDATE blobs SET refcount = refcount - (
-			   SELECT COUNT(*) FROM files WHERE files.package_id = ?1 AND files.blob_hash = blobs.hash
-			 )
-			 WHERE hash IN (SELECT DISTINCT blob_hash FROM files WHERE package_id = ?1)`
-		)
-			.bind(packageId)
-			.run();
-	}
-
-	// 3. 删包（ON DELETE CASCADE 带 files）
+	// 2. 删包（ON DELETE CASCADE 带 files）
 	await DB.prepare('DELETE FROM packages WHERE id = ?1').bind(packageId).run();
+
+	// 3. 对该包涉及的全部 hash 做 refcount 绝对对齐（此时该包已不在计数内；分片 batch，
+	//    对齐幂等，批间失败重放无副作用）
+	const alignStmts = (blobRows ?? []).map((r) => DB.prepare(ALIGN_REFCOUNT_SQL).bind(r.hash));
+	for (let i = 0; i < alignStmts.length; i += 50) {
+		await DB.batch(alignStmts.slice(i, i + 50));
+	}
 
 	// 4. 清「归零且已无任何 files 引用」的 blob 行 + 对应 R2 对象。
 	//    归零但被其他 pending 包引用的行不能删（files 外键约束），留待其自身清理
@@ -77,15 +73,13 @@ export async function purgePackage(env: Env, packageId: string): Promise<{ ok: t
 	return { ok: true };
 }
 
-/** 懒清理：删除指定用户超 24h 的 pending 包（建新上传前调用） */
-export async function lazyCleanupPending(env: Env, uploaderOsuId: number): Promise<number> {
+/** 懒清理：全站扫描超 24h 的 pending 包（他人弃单也回收，防占死水位；每次至多 20 个） */
+export async function lazyCleanupPending(env: Env): Promise<number> {
 	const { results } = await env.DB.prepare(
 		`SELECT id FROM packages
-		 WHERE uploader_osu_id = ?1 AND status = 'pending'
-		   AND created_at < datetime('now', '-24 hours')`
-	)
-		.bind(uploaderOsuId)
-		.all<{ id: string }>();
+		 WHERE status = 'pending' AND created_at < datetime('now', '-24 hours')
+		 LIMIT 20`
+	).all<{ id: string }>();
 	let n = 0;
 	for (const row of results ?? []) {
 		const r = await purgePackage(env, row.id);

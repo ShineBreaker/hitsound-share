@@ -79,6 +79,7 @@ const zh = {
 	'upload.err.blob_mismatch': '部分文件校验不一致，请重新上传',
 	'upload.err.zip_missing': '压缩包未收到，请重试',
 	'upload.err.zip_mismatch': '压缩包校验不一致，请重试',
+	'upload.err.zip_too_large': '压缩包实际大小超出限制（≤100MB）',
 	'upload.err.network': '网络错误，请重试',
 
 	// 我的上传
