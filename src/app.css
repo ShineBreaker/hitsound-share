@@ -242,3 +242,14 @@ button {
 		animation: none !important;
 	}
 }
+
+/* 窄屏：页面禁止横向溢出；对话框收窄内边距 */
+@media (max-width: 768px) {
+	html,
+	body {
+		overflow-x: hidden;
+	}
+	.dialog-card {
+		padding: 14px 16px;
+	}
+}

@@ -24,6 +24,9 @@
 	import { saveZip } from '$lib/zip-save';
 	import { t } from '$lib/i18n';
 	import type { FileRow } from '$lib/types';
+	import { selection, assignSelection } from '$lib/selection.svelte';
+	import { cellForKey } from '$lib/kit.svelte';
+	import { ui } from '$lib/ui.svelte';
 
 	let packages = $state<TreePackage[]>([]);
 	let selected = $state('');
@@ -37,6 +40,7 @@
 	let pageSeq = 0; // 文件页请求序号：只接受最新请求的响应，防止快速切换文件夹时旧响应后到覆盖
 	let me = $state<Me>({ loggedIn: false }); // 登录态（树节点改名按钮显示）
 	let editingKey = $state(''); // 行内编辑中的树节点 key
+	let treeOpen = $state(false); // 窄屏目录抽屉开关（宽屏下 CSS 固定显示，此标志无视觉影响）
 
 	const PAGE_SIZE = 200;
 
@@ -105,6 +109,7 @@
 			if (packages.length > 0) {
 				selected = `pkg:${packages[0].id}`;
 				await loadPage(selected, false);
+				ui.pageReady = true; // 树 + 首页文件就绪 → 新手引导可启动（库为空不引导）
 			}
 		} catch {
 			treeError = true;
@@ -112,6 +117,7 @@
 	}
 
 	function select(key: string): void {
+		treeOpen = false; // 窄屏抽屉选中即关
 		if (key === selected) return;
 		selected = key;
 		void loadPage(key, false);
@@ -200,11 +206,30 @@
 		void initTree();
 		// 登录态：树节点改名按钮的显示判定（失败按未登录处理）
 		void fetchMe().then((m) => (me = m));
+
+		// 全局键：Esc 清多选（无模态且不在输入中时）；Q–V 把选中文件放入对应格子
+		// （cellForKey 内部已处理修饰键/输入框/模态判定；对话框与引导浮层都带 aria-modal）
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				if (document.querySelector('[aria-modal="true"]')) return;
+				const tgt = e.target as HTMLElement | null;
+				if (tgt?.closest('input, textarea, select, [contenteditable="true"]')) return;
+				if (selection.size > 0) selection.clear();
+				return;
+			}
+			const cell = cellForKey(e);
+			if (cell && selection.size > 0) {
+				e.preventDefault();
+				assignSelection(cell);
+			}
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
 	});
 </script>
 
 <div class="browser">
-	<aside class="tree-panel">
+	<aside class="tree-panel" class:open={treeOpen} data-tour="tree">
 		<div class="panel-title"><span>{t('tree.title')}</span></div>
 		<nav class="tree">
 			{#if treeLoading}
@@ -235,9 +260,20 @@
 			{/if}
 		</nav>
 	</aside>
+	<!-- 窄屏抽屉遮罩（点击关抽屉；宽屏不渲染出视觉效果——抽屉不定位时遮罩也隐藏） -->
+	{#if treeOpen}
+		<div class="drawer-mask" onclick={() => (treeOpen = false)} aria-hidden="true"></div>
+	{/if}
 
 	<section class="files-panel">
 		<div class="files-head">
+			<button
+				class="btn drawer-btn"
+				aria-expanded={treeOpen}
+				onclick={() => (treeOpen = !treeOpen)}
+			>
+				{t('tree.drawer')}
+			</button>
 			<nav class="crumbs" aria-label={t('app.tagline')}>
 				{#each crumbs as c, i (c.key)}
 					<button class="crumb" class:last={i === crumbs.length - 1} onclick={() => select(c.key)}>
@@ -259,6 +295,7 @@
 					<button
 						class="btn primary"
 						class:err={dlState === 'error'}
+						data-tour="packdl"
 						title={dlState === 'error' ? t('download.failedHint') : ''}
 						onclick={() => void downloadPackage()}
 					>
@@ -268,7 +305,15 @@
 			{/if}
 		</div>
 
-		<div class="files-body">
+		<!-- 多选条：有选中时显示；按 Q–V 或点组装格子批量入格（选中跨文件夹保留） -->
+		{#if selection.size > 0}
+			<div class="selbar" role="status">
+				<span class="selbar-text">{t('sel.bar', { count: selection.size })}</span>
+				<button class="btn" onclick={() => selection.clear()}>{t('sel.clear')}</button>
+			</div>
+		{/if}
+
+		<div class="files-body" data-tour="files">
 			{#if loading}
 				<!-- 文件表加载占位骨架 -->
 				<div class="skel-files" aria-hidden="true">
@@ -470,5 +515,91 @@
 		justify-content: center;
 		padding: 10px;
 		border-top: 1px solid color-mix(in srgb, var(--bg-l3) 55%, transparent);
+	}
+
+	/* 多选条：薄荷浅底提示 + 清除 */
+	.selbar {
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		padding: 6px 12px;
+		background: color-mix(in srgb, var(--accent) 10%, var(--bg-l2));
+		border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+	}
+	.selbar-text {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 12px;
+		color: var(--accent-bright);
+	}
+
+	/* 目录抽屉开关：仅窄屏显示 */
+	.drawer-btn {
+		display: none;
+		flex: none;
+	}
+	.drawer-mask {
+		display: none;
+	}
+
+	/* ============ 窄屏（≤768px）：单栏 + 目录抽屉 ============ */
+	@media (max-width: 768px) {
+		.browser {
+			grid-template-columns: 1fr;
+			padding: 10px;
+			gap: 10px;
+			overflow: hidden; /* 防横向溢出（360–430px） */
+		}
+
+		.tree-panel {
+			position: fixed;
+			top: 0;
+			bottom: 0;
+			left: 0;
+			width: min(300px, 82vw);
+			z-index: 80;
+			border-radius: 0;
+			border-left: none;
+			transform: translateX(-105%);
+			transition: transform 0.25s ease;
+		}
+		.tree-panel.open {
+			transform: none;
+		}
+		.drawer-mask {
+			display: block;
+			position: fixed;
+			inset: 0;
+			z-index: 70;
+			background: rgb(9 12 9 / 0.55);
+		}
+		.drawer-btn {
+			display: inline-flex;
+		}
+
+		.files-head {
+			gap: 8px;
+			padding: 6px 8px;
+		}
+		.crumbs {
+			flex: 1;
+			min-width: 0;
+			overflow-x: auto;
+			flex-wrap: nowrap;
+		}
+		.selbar {
+			padding: 6px 8px;
+		}
+	}
+
+	/* 降低动态：抽屉滑动也尊重系统设置 */
+	@media (prefers-reduced-motion: reduce) {
+		.tree-panel {
+			transition: none;
+		}
 	}
 </style>

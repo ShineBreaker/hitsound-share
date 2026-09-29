@@ -5,6 +5,8 @@
 	import type { FileRow } from '$lib/types';
 	import { t } from '$lib/i18n';
 	import { fetchPeaks, DND_FILE_MIME, type KitDragData } from '$lib/api';
+	import { selection } from '$lib/selection.svelte';
+	import type { KitFile } from '$lib/kit.svelte';
 	import WaveformCanvas from './WaveformCanvas.svelte';
 
 	interface Props {
@@ -19,6 +21,47 @@
 		onseek?: (file: FileRow, ratio: number) => void;
 	}
 	let { files, playingId = null, paused = true, progress = 0, onplay, onseek }: Props = $props();
+
+	/** FileRow → 入格载荷（只带所需三字段） */
+	function toKitFile(f: FileRow): KitFile {
+		return { id: f.id, name: f.name, format: f.format };
+	}
+
+	// 表头全选框：全选当前已加载行 / 有选中则取消
+	const allSelected = $derived(files.length > 0 && files.every((f) => selection.has(f.id)));
+	const someSelected = $derived(files.some((f) => selection.has(f.id)));
+
+	function toggleAll(): void {
+		if (allSelected || someSelected) {
+			// 已全选或部分选：把本页行从选中集移除
+			const ids = new Set(files.map((f) => f.id));
+			selection.items = selection.items.filter((i) => !ids.has(i.id));
+		} else {
+			selection.selectRange(files.map(toKitFile));
+		}
+	}
+
+	/** 行点击：Ctrl/⌘ 切换单选，Shift 从锚点连选，裸点播放 */
+	function rowClick(e: MouseEvent, f: FileRow): void {
+		if (e.ctrlKey || e.metaKey) {
+			e.preventDefault();
+			selection.toggle(toKitFile(f));
+			return;
+		}
+		if (e.shiftKey) {
+			e.preventDefault();
+			const ai = files.findIndex((x) => x.id === selection.anchor);
+			const ti = files.findIndex((x) => x.id === f.id);
+			if (ai !== -1 && ti !== -1) {
+				const [a, b] = ai < ti ? [ai, ti] : [ti, ai];
+				selection.selectRange(files.slice(a, b + 1).map(toKitFile));
+			} else {
+				selection.toggle(toKitFile(f));
+			}
+			return;
+		}
+		onplay?.(f);
+	}
 
 	// 波形按需缓存：undefined=未请求 null=无波形 number[]=已加载
 	let peaksMap = $state<Record<string, number[] | null | undefined>>({});
@@ -65,12 +108,25 @@
 		<table>
 			<thead>
 				<tr>
+					<th class="col-sel">
+						<button
+							class="selbox"
+							class:on={allSelected}
+							class:part={!allSelected && someSelected}
+							data-tour="select"
+							role="checkbox"
+							aria-checked={allSelected ? 'true' : someSelected ? 'mixed' : 'false'}
+							title={t('sel.all')}
+							aria-label={t('sel.all')}
+							onclick={toggleAll}
+						></button>
+					</th>
 					<th class="col-name">{t('file.name')}</th>
 					<th class="col-num">{t('file.format')}</th>
 					<th class="col-num">{t('file.duration')}</th>
-					<th class="col-num">{t('file.sampleRate')}</th>
-					<th class="col-num">{t('file.bitDepth')}</th>
-					<th class="col-num">{t('file.channels')}</th>
+					<th class="col-num col-meta">{t('file.sampleRate')}</th>
+					<th class="col-num col-meta">{t('file.bitDepth')}</th>
+					<th class="col-num col-meta">{t('file.channels')}</th>
 					<th class="col-wave">{t('file.waveform')}</th>
 					<th class="col-dl"><span class="sr-only">{t('action.download')}</span></th>
 				</tr>
@@ -79,14 +135,19 @@
 				{#each files as f (f.id)}
 					<tr
 						class:playing={f.id === playingId}
+						class:selected={selection.has(f.id)}
 						draggable="true"
 						ondragstart={(e) => {
-							// 供底部组装面板接收：自定义 MIME，drop 侧按 types 判断来源
-							const data: KitDragData = { id: f.id, name: f.name, format: f.format };
+							// 供底部组装面板接收：自定义 MIME，drop 侧按 types 判断来源；
+							// 拖的是多选中行时整组按选中顺序入格（续号），否则单行无序号
+							const kf = toKitFile(f);
+							const files2 =
+								selection.size > 1 && selection.has(f.id) ? [...selection.items] : [kf];
+							const data: KitDragData = { files: files2 };
 							e.dataTransfer?.setData(DND_FILE_MIME, JSON.stringify(data));
 							if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy';
 						}}
-						onclick={() => onplay?.(f)}
+						onclick={(e) => rowClick(e, f)}
 						onkeydown={(e) => {
 							if (e.key === 'Enter' || e.key === ' ') {
 								e.preventDefault(); // Space 默认滚动页面，需拦下
@@ -97,6 +158,20 @@
 						tabindex="0"
 						aria-label={playTitle(f)}
 					>
+						<td class="col-sel">
+							<button
+								class="selbox"
+								class:on={selection.has(f.id)}
+								role="checkbox"
+								aria-checked={selection.has(f.id)}
+								title={t('sel.row')}
+								aria-label={t('sel.row')}
+								onclick={(e) => {
+									e.stopPropagation(); // 勾选不触发行播放
+									selection.toggle(toKitFile(f));
+								}}
+							></button>
+						</td>
 						<td class="col-name" title={f.name}>
 							{#if f.id === playingId}
 								<!-- 播放指示：三根跳动条（暂停时静止） -->
@@ -106,9 +181,9 @@
 						</td>
 						<td class="col-num"><span class="fmt">{f.format.toUpperCase()}</span></td>
 						<td class="col-num tnum">{fmtDuration(f.durationS)}</td>
-						<td class="col-num tnum">{fmtSampleRate(f.sampleRate)}</td>
-						<td class="col-num tnum">{fmtBitDepth(f.bitDepth)}</td>
-						<td class="col-num">{fmtChannels(f.channels)}</td>
+						<td class="col-num tnum col-meta">{fmtSampleRate(f.sampleRate)}</td>
+						<td class="col-num tnum col-meta">{fmtBitDepth(f.bitDepth)}</td>
+						<td class="col-num col-meta">{fmtChannels(f.channels)}</td>
 						<td class="col-wave">
 							<WaveformCanvas
 								peaks={peaksMap[f.id]}
@@ -176,10 +251,19 @@
 
 	tbody tr {
 		cursor: pointer;
+		user-select: none; /* 防止 Shift/Ctrl 连点选中整页文本 */
 	}
 	tbody tr:hover td {
 		background: color-mix(in srgb, var(--bg-l3) 55%, transparent);
 		color: var(--text);
+	}
+
+	/* 多选中行：薄荷 ~10% 底（比播放行的 14% 略弱，叠加时播放态为准） */
+	tbody tr.selected td {
+		background: color-mix(in srgb, var(--accent) 10%, transparent);
+	}
+	tbody tr.selected:hover td {
+		background: color-mix(in srgb, var(--accent) 16%, transparent);
 	}
 
 	/* 播放行：薄荷淡底 + 左侧 3px 内嵌薄荷条（编辑器选中行同款） */
@@ -189,6 +273,49 @@
 	}
 	tbody tr.playing td:first-child {
 		box-shadow: inset 3px 0 0 var(--accent);
+	}
+
+	/* 多选勾选列：按钮 32px 触控目标，内嵌 15px 视觉框 */
+	.col-sel {
+		width: 40px;
+		padding: 0 4px;
+		text-align: center;
+	}
+	.selbox {
+		width: 32px;
+		height: 32px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border: none;
+		background: transparent;
+		cursor: pointer;
+		padding: 0;
+		border-radius: var(--radius);
+	}
+	.selbox::before {
+		content: '';
+		width: 15px;
+		height: 15px;
+		border-radius: 4px;
+		border: 1.5px solid var(--text-faint);
+		background: var(--bg-inset);
+		transition:
+			border-color 0.12s ease,
+			background 0.12s ease;
+	}
+	.selbox:hover::before {
+		border-color: var(--accent);
+	}
+	.selbox.on::before {
+		border-color: var(--accent);
+		background: var(--accent)
+			url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.5 5 9.5 10 3' fill='none' stroke='%231e231e' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")
+			center / 11px no-repeat;
+	}
+	.selbox.part::before {
+		border-color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 45%, var(--bg-inset));
 	}
 
 	.col-name {
@@ -313,5 +440,25 @@
 		color: var(--text-faint);
 		font-size: 12px;
 		text-align: right;
+	}
+
+	/* 窄屏：隐藏采样率/位深/声道三列，行高加到触控尺寸 */
+	@media (max-width: 768px) {
+		.col-meta {
+			display: none;
+		}
+		td {
+			padding-top: 10px;
+			padding-bottom: 10px;
+		}
+		tbody tr {
+			min-height: 44px;
+		}
+		.col-name {
+			max-width: 40vw;
+		}
+		.col-wave {
+			width: 120px;
+		}
 	}
 </style>

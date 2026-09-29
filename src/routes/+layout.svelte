@@ -12,6 +12,9 @@
 	import { fetchConfig, fetchMe } from '$lib/api';
 	import UploadDialog from '$lib/components/UploadDialog.svelte';
 	import MyPackages from '$lib/components/MyPackages.svelte';
+	import HelpDialog from '$lib/components/HelpDialog.svelte';
+	import Tour from '$lib/components/Tour.svelte';
+	import { ui } from '$lib/ui.svelte';
 
 	let { children } = $props();
 
@@ -22,15 +25,28 @@
 	let showUpload = $state(false);
 	let showMy = $state(false);
 
-	onMount(async () => {
-		try {
-			uploadEnabled = (await fetchConfig()).uploadEnabled;
-		} catch {
-			// 配置拉取失败按未启用处理
-		}
-		if (!uploadEnabled) return;
-		const data = await fetchMe();
-		if (data.loggedIn && data.username) me = { username: data.username };
+	onMount(() => {
+		// ? 键（Shift+/）打开帮助：不在输入框、无其他模态时生效
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key !== '?' || e.ctrlKey || e.altKey || e.metaKey) return;
+			const tgt = e.target as HTMLElement | null;
+			if (tgt?.closest('input, textarea, select, [contenteditable="true"]')) return;
+			if (document.querySelector('[aria-modal="true"]')) return; // 已有模态（含帮助自身）不叠开
+			ui.helpOpen = true;
+		};
+		window.addEventListener('keydown', onKey);
+		// 配置与登录态是独立异步流程，不阻塞监听注册
+		void (async () => {
+			try {
+				uploadEnabled = (await fetchConfig()).uploadEnabled;
+			} catch {
+				// 配置拉取失败按未启用处理
+			}
+			if (!uploadEnabled) return;
+			const data = await fetchMe();
+			if (data.loggedIn && data.username) me = { username: data.username };
+		})();
+		return () => window.removeEventListener('keydown', onKey);
 	});
 
 	async function logout(): Promise<void> {
@@ -67,8 +83,26 @@
 				{:else}
 					<a class="btn lg" href="/api/auth/login">{t('app.login')}</a>
 				{/if}
-				<button class="btn primary lg" type="button" onclick={onUploadClick}>{t('app.upload')}</button>
+				<button
+					class="btn primary lg"
+					type="button"
+					data-tour="upload"
+					onclick={onUploadClick}
+				>
+					{t('app.upload')}
+				</button>
 			{/if}
+			<!-- 帮助入口始终显示（上传未启用时也不例外） -->
+			<button
+				class="help-btn"
+				type="button"
+				data-tour="help"
+				title={t('app.help')}
+				aria-label={t('app.help')}
+				onclick={() => (ui.helpOpen = true)}
+			>
+				?
+			</button>
 		</div>
 	</header>
 
@@ -106,6 +140,10 @@
 {#if showMy}
 	<MyPackages onclose={() => (showMy = false)} />
 {/if}
+{#if ui.helpOpen}
+	<HelpDialog {uploadEnabled} onclose={() => (ui.helpOpen = false)} />
+{/if}
+<Tour />
 
 <style>
 	.shell {
@@ -207,7 +245,7 @@
 	.gh-fab {
 		position: fixed;
 		right: 16px;
-		bottom: 16px;
+		bottom: calc(16px + env(safe-area-inset-bottom, 0px));
 		z-index: 50;
 		width: 40px;
 		height: 40px;
@@ -228,5 +266,44 @@
 		width: 20px;
 		height: 20px;
 		fill: currentColor;
+	}
+
+	/* 帮助圆钮：与 GitHub 钮同款描边圆形 */
+	.help-btn {
+		width: 28px;
+		height: 28px;
+		flex: none;
+		border-radius: 50%;
+		border: 1px solid var(--bg-l3);
+		background: transparent;
+		color: var(--text-faint);
+		font-size: 14px;
+		font-weight: 700;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.help-btn:hover {
+		color: var(--accent-bright);
+		border-color: var(--accent);
+	}
+
+	/* ============ 窄屏：藏标语、收紧顶栏 ============ */
+	@media (max-width: 768px) {
+		.topbar {
+			padding: 0 12px;
+			height: 48px;
+		}
+		.tagline {
+			display: none;
+		}
+		.title {
+			font-size: 15px;
+		}
+		.actions :global(.btn.lg) {
+			padding: 4px 12px;
+			font-size: 13px;
+		}
 	}
 </style>

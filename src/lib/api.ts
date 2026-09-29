@@ -1,6 +1,7 @@
 // 前端 API 封装：树 / 文件列表 / 波形（带缓存）/ 配置 / 整包下载清单 / 改名；
 // 含树构建（与后端聚合同口径）
 import type { FileRow, TreeNode, ZipManifest } from '$lib/types';
+import type { KitFile } from '$lib/kit.svelte';
 
 export interface TreePackage {
 	id: string;
@@ -176,8 +177,7 @@ export function parseNodeKey(key: string): { pkg: string; folder: string } {
 /** 文件表行 → 组装面板格子的拖拽数据类型（dataTransfer 自定义 MIME，只接受本站行内拖出的数据） */
 export const DND_FILE_MIME = 'application/x-hitsound-file';
 
+/** 拖拽载荷：{files} 有序列表——拖多选中行时整组入格（续号），单行单文件无序号 */
 export interface KitDragData {
-	id: string; // files.id
-	name: string;
-	format: string;
+	files: KitFile[];
 }

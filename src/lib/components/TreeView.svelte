@@ -243,6 +243,15 @@
 	.rename:focus-visible {
 		display: inline-flex;
 	}
+	/* 触屏没有 hover：常显（小屏触控目标放宽到 32px） */
+	@media (hover: none) {
+		.rename {
+			display: inline-flex;
+			width: 32px;
+			height: 32px;
+			font-size: 13px;
+		}
+	}
 	.rename:hover {
 		background: var(--bg-l3);
 		color: var(--accent-bright);
