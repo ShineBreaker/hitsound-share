@@ -1,10 +1,12 @@
 <script lang="ts">
-	// 上传对话框：选 zip 整包或单个音频文件 → fflate 解析 → 每文件 sha256 + 元数据
+	// 上传对话框：选 zip / rar 整包或单个音频文件 → $lib/archive 按魔数解包（rar 走 UnRAR wasm
+	// 按需加载；zip 文件名 GBK 兜底）→ 每文件 sha256 + 元数据
 	// （wav 手解 RIFF 头，decodeAudioData 得时长/声道/波形；解码失败的文件元数据置 null 仍可上传）
 	// → POST /api/upload（manifest，可选 appendTo 附加到现有分组）→ 浏览器直传缺失 blob
 	// （预签名 PUT）→ POST /api/upload/done（服务端核验，附加模式在此合并进目标包）→ 完成刷新。
 	// v4 起不再上传 original.zip（整包下载改为实时打包）
-	import { unzip } from 'fflate';
+	import { readArchive, ArchiveError } from '$lib/archive';
+	import { loadUnrarWasm } from '$lib/unrar-wasm';
 	import { t } from '$lib/i18n';
 
 	interface Props {
@@ -203,20 +205,24 @@
 		return i === -1 ? '' : name.slice(i + 1).toLowerCase();
 	}
 
+	// 压缩包与单音频分流仍按扩展名（.rar 允许进入）；压缩包内部格式由 readArchive 按魔数判定
+	const ARCHIVE_EXTS = ['zip', 'rar'];
 	async function onFileChosen(e: Event): Promise<void> {
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
 		const ext = fileExt(file.name);
 		addLog('info', `选择文件 ${file.name}（${fmtBytes(file.size)}）`);
-		if (ext !== 'zip' && !['wav', 'ogg', 'mp3'].includes(ext)) {
+		if (!ARCHIVE_EXTS.includes(ext) && !['wav', 'ogg', 'mp3'].includes(ext)) {
 			addLog('error', `不支持的扩展名：${ext || '（无）'}`);
 			fail('bad_ext');
 			return;
 		}
-		// 分组名预填：zip 用文件名，单文件默认上传者用户名
+		// 分组名预填：压缩包用文件名，单文件默认上传者用户名
 		pendingFile = file;
-		groupName = ext === 'zip' ? file.name.replace(/\.zip$/i, '') : username;
+		groupName = ARCHIVE_EXTS.includes(ext)
+			? file.name.replace(/\.(zip|rar)$/i, '')
+			: username;
 		mode = 'new';
 		appendTarget = '';
 		phase = 'confirm';
@@ -227,7 +233,7 @@
 		const file = pendingFile;
 		const name = groupName.trim();
 		if (!file) return;
-		const single = fileExt(file.name) !== 'zip';
+		const single = !ARCHIVE_EXTS.includes(fileExt(file.name));
 		if (mode === 'append') {
 			if (!appendTarget) return;
 			pendingFile = null;
@@ -260,32 +266,28 @@
 				addLog('info', `解析完成：1 个文件（${ext}，sha256 ${hash.slice(0, 12)}…）`);
 			} else {
 				const buf = new Uint8Array(await file.arrayBuffer());
-				const files = await new Promise<Record<string, Uint8Array>>((resolve, reject) =>
-					unzip(buf, (err, unzipped) => (err ? reject(err) : resolve(unzipped)))
-				);
+				const files = await readArchive(buf, loadUnrarWasm);
 
-				// 目录条目（以 / 结尾）跳过；非音频扩展名跳过
-				const paths = Object.keys(files).filter((p) => !p.endsWith('/'));
-				const audioPaths = paths.filter((p) => {
-					const ext = p.split('.').pop()?.toLowerCase() ?? '';
-					return ['wav', 'ogg', 'mp3'].includes(ext);
-				});
-				skippedCount = paths.length - audioPaths.length;
-				addLog('info', `解包完成：${audioPaths.length} 个音频 / 跳过 ${skippedCount} 个`);
-				if (audioPaths.length === 0) {
-					addLog('error', 'zip 内没有可收录的音频文件（wav / ogg / mp3）');
+				// 非音频扩展名跳过（目录条目已在 archive 层剔除；路径分隔符已归一为 /）
+				const audioFiles = files.filter((f) =>
+					['wav', 'ogg', 'mp3'].includes(f.path.split('.').pop()?.toLowerCase() ?? '')
+				);
+				skippedCount = files.length - audioFiles.length;
+				addLog('info', `解包完成：${audioFiles.length} 个音频 / 跳过 ${skippedCount} 个`);
+				if (audioFiles.length === 0) {
+					addLog('error', '压缩包内没有可收录的音频文件（wav / ogg / mp3）');
 					fail('bad_ext');
 					return;
 				}
 
-				progressTotal = audioPaths.length;
+				progressTotal = audioFiles.length;
 				progressN = 0;
-				for (const path of audioPaths) {
-					const d = files[path];
-					const ext = path.split('.').pop()?.toLowerCase() ?? 'wav';
+				for (const f of audioFiles) {
+					const d = f.data;
+					const ext = f.path.split('.').pop()?.toLowerCase() ?? 'wav';
 					const hash = await sha256Hex(d);
 					if (!blobData.has(hash)) blobData.set(hash, d);
-					entries.push(await buildEntry(path, d, ext, hash));
+					entries.push(await buildEntry(f.path, d, ext, hash));
 					progressN += 1;
 					// 每个文件让出一帧，长列表解析期间界面不冻结
 					await new Promise((r) => setTimeout(r, 0));
@@ -359,6 +361,12 @@
 			addLog('info', `POST /api/upload/done → ${dres.status}`);
 			phase = 'done';
 		} catch (err) {
+			// 解包错误按原因码提示（格式/加密/损坏），不再一律报网络错误
+			if (err instanceof ArchiveError) {
+				addLog('error', `解包失败[${err.code}]：${err.message}`);
+				fail(err.code);
+				return;
+			}
 			addLog('error', `异常中断：${err instanceof Error ? err.message : String(err)}`);
 			fail('network');
 		}
@@ -396,7 +404,7 @@
 			<input
 				bind:this={fileInput}
 				type="file"
-				accept=".zip,.wav,.ogg,.mp3"
+				accept=".zip,.rar,.wav,.ogg,.mp3"
 				onchange={(e) => void onFileChosen(e)}
 			/>
 		{:else if phase === 'confirm'}

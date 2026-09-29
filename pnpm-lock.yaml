@@ -108,6 +108,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      node-unrar-js:
+        specifier: ^2.0.2
+        version: 2.0.2
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260928.1
@@ -1006,6 +1010,10 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
+  node-unrar-js@2.0.2:
+    resolution: {integrity: sha512-hLNmoJzqaKJnod8yiTVGe9hnlNRHotUi0CreSv/8HtfRi/3JnRC8DvsmKfeGGguRjTEulhZK6zXX5PXoVuDZ2w==}
+    engines: {node: '>=10.0.0'}
+
   obug@2.2.1:
     resolution: {integrity: sha512-XrsrhT5sybtKI6wakr2SPOlGZWWYbUXZ7a0jT8/QOeAPau+1X/bSegNe5YR75oJmEZQbKningirmGOEJCIk61Q==}
     engines: {node: '>=12.20.0'}
@@ -1753,6 +1761,8 @@ snapshots:
   mrmime@2.0.1: {}
 
   nanoid@3.3.19: {}
+
+  node-unrar-js@2.0.2: {}
 
   obug@2.2.1: {}
 
