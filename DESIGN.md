@@ -46,8 +46,12 @@
 
 ## 组件模式
 
+- **UI 基元唯一实现在 `src/app.css`**：`.btn` / `.btn.primary` / `.btn.danger` / `.btn.err` / `.btn.lg` / `.btn.packing`、`.dialog-mask` / `.dialog-card` / `.dialog-close`、`.skel`；组件只写布局与尺寸微调，不再自带一份按钮/对话框样式
 - **面板**：`--bg-l2` 卡片浮于 `--bg-l1` 页面，圆角 `--radius-lg` + 轻阴影
-- **按钮三档**：primary 薄荷填充/`--on-accent` 文字；默认透明 ghost（hover `--bg-l3`）；危险走 `--accent-pink`（hover 变边框+文字，填充仅确认后）
+- **按钮三档**：primary 薄荷填充/`--on-accent` 文字；默认透明 ghost（hover `--bg-l3`）；危险走 `--accent-pink`（hover 变边框+文字，填充仅确认后）；失败态 `.err` 粉底，点击即重试
+- **进度按钮**：长任务（打包下载）期间按钮加 `.packing`，用 `style:--pct` 驱动 `accent-deep → accent` 填充，文字始终在填充之上
+- **对话框**：打开即聚焦首个控件，Esc 关闭（进行中的上传除外）
+- **加载骨架**：树与文件表加载中显示 `.skel` 占位条，只做透明度脉动；`prefers-reduced-motion` 下关闭所有循环动画（跳动条、骨架）
 - **输入/下拉**：`--bg-inset` 底 + `--bg-l3` 边，focus 描 `--accent`；原生控件由 `:root color-scheme: dark` 接管
 - **选中态**：薄荷填充 + `--on-accent` 文字（树节点、分段器）；播放行用薄荷 14% 底 + 左侧 3px 内嵌薄荷条
 - **格子（音效组装）**：`--bg-l3` 浮起方格 + 居中「+」，拖入悬停时描薄荷边 + 薄荷 12% 底

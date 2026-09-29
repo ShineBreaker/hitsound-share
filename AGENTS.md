@@ -8,7 +8,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 ## 常用命令
 
-- `pnpm dev` / `pnpm build` / `pnpm preview`；无独立 lint/test 脚本，改动后至少跑 `pnpm build` 验证
+- `pnpm dev` / `pnpm build` / `pnpm preview`；`pnpm test`（vitest，`src/**/*.test.ts`）——改动后 `pnpm test` 与 `pnpm build` 都须通过；无 lint 脚本
 - `wrangler d1 execute hitsound-share-db --local --file schema.sql`：初始化本地 D1 模拟库；`--command "SQL"` 单条执行（线上操作用 `--remote`）
 - `wrangler pages dev .svelte-kit/cloudflare --port 8799 -b KEY=VALUE…`：用构建产物起本地 Functions（bindings 从 wrangler.toml 读，env 变量用 `-b` 传）
 - `wrangler r2 object put/get/list hitsound-files/<key> --local/--remote`：R2 对象操作（不加 `--local` 的默认仍是本地，**线上必须显式 `--remote`**）
@@ -32,9 +32,11 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 ## 目录速览
 
-- `src/lib/server/` — 仅服务端代码：`osu.ts`（唯一出网通道）、`session.ts`（HMAC 签名 cookie）、`media.ts`（R2 key/Range/流式代理）、`upload.ts`（manifest 校验/配额/预签名 PUT+GET/魔数核验）、`env.ts`（密钥读取）、`packages.ts`（包治理：权限守卫/删除/refcount 对齐/懒清理）
+- `src/lib/server/` — 仅服务端代码：`osu.ts`（唯一出网通道）、`session.ts`（HMAC 签名 cookie）、`guard.ts`（`requireUser`/`requirePackageOwner`，返回 Response 即已作答）、`env.ts`（密钥读取 + `uploadCapable`/`pickR2Secrets` 能力判定）、`media.ts`（R2 key/Range/流式代理）、`upload.ts`（manifest 校验/预签名 PUT+GET/魔数）、`ledger.ts`（Blob 账本：refcount 登记/对齐/回收，唯一入口）、`verify.ts`（done 新 blob 核验）、`packages.ts`（包行查询/pending 懒清理）
+- `src/lib/*.ts` — 浏览器端 deep module：`upload-pipeline.ts`（解包→哈希→manifest→并发直传→done，事件流上报）、`zip-save.ts`（整包下载与组装面板共用的打包落盘）、`player.svelte.ts`（全站唯一播放器）、`pool.ts`（并发池）、`api.ts`（含 peaks 合批）
+- `src/test/` — 测试 adapter：`d1-sqlite.ts`（node:sqlite 模拟 D1）、`r2-memory.ts`（内存 R2），均带 `calls` 计数用于断言子请求预算
 - `src/routes/api/**` — 全部 API 端点（编译为 Pages Functions）：`upload`（manifest+影子包）、`upload/done`（核验+合并）、`package/[id]`（PATCH 改名 / DELETE）、`package/[id]/folder`（小类改名）、`package/[id]/zip`（整包下载清单）、`blob/[hash]/[ext]`（下载回退代理）、`admin/purge-zips`、`tree`/`files`/`waveform`/`my`/`auth`/`config`
-- `src/routes/+page.ts` prerender 首页 shell 省 Functions 配额；整包下载在 `+page.svelte` 浏览器端实时拼 zip（fflate 流式 STORE）
+- `src/routes/+page.ts` prerender 首页 shell 省 Functions 配额；整包下载由 `+page.svelte` 拉清单后交给 `zip-save.ts`（fflate 流式 STORE）
 - `src/lib/components/` — TreeView（含行内改名）/ FileTable（行可拖入组装面板）/ WaveformCanvas / UploadDialog（新建/附加模式）/ MyPackages / KitBuilder（右下角悬浮组装面板：格子拖放 → `行-列[序号]` 命名打包 zip；自动展开必须经 setTimeout 延迟——dragstart 内同步改 DOM 会被 Chromium 取消拖拽）
 - `src/lib/i18n/` — 文案集中在 `zh.ts` + `t()`（预留 en），不要在组件里写死中文
 - `schema.sql` — D1 表结构（v4：packages.append_to 影子包）；`wrangler.toml` — Pages 构建配置 + R2/D1 bindings；`svelte.config.js` — CSP
@@ -44,10 +46,11 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 1. 服务端出网只允许 `src/lib/server/osu.ts` 一条通道：协议必须 https、host 必须是 `osu.ppy.sh`；禁止在其他服务端代码新增 fetch/出网（Mimosa 验收条件：拒绝 localhost、环回、私有和保留地址）。R2/D1 走 bindings 不算出网；aws4fetch 预签名是本地计算，同样不出网
 2. 凭证只从环境变量读（`getSecrets()`），严禁硬编码、打印、入库；`.env` 已 gitignore。Agent 不得读取、展示、复制 `.env` 或 Pages 变量中的密钥**值**，不得把任何密钥发往外部（含日志、issue、对话输出）；任何对外发送数据的操作须逐次征得用户确认
-3. 内容寻址存储：R2 key = `blobs/<hash前2>/<sha256>.<ext>`（统一经 `blobKey()` 组装），`blobs.refcount` 管生命周期——done 用全表绝对对齐（= 全库 visible 包引用数），删除/清理按涉及 hash 对齐，归零才能删 R2 对象。**整包下载 = 浏览器按当前 files 实时拼 zip**（清单端点 + 预签名 GET 直连/`/api/blob` 代理回退），**original.zip 已停传停存**。附加上传走「影子 pending 包」：`packages.append_to` 指向目标包，done 核验后事务性合并；仅限自己的 visible 包
+3. 内容寻址存储：R2 key = `blobs/<hash前2>/<sha256>.<ext>`（统一经 `blobKey()` 组装），`blobs.refcount` 管生命周期（ADR 0002）——refcount 读写一律经 `ledger.ts`，每个操作的子请求数须与包大小无关（集合式 SQL / `RETURNING` / R2 批量 delete），归零且无 files 引用才能删 R2 对象。**整包下载 = 浏览器按当前 files 实时拼 zip**（清单端点 + 预签名 GET 直连/`/api/blob` 代理回退），**original.zip 已停传停存**。附加上传走「影子 pending 包」：`packages.append_to` 指向目标包，done 核验后事务性合并；仅限自己的 visible 包
 4. 文件/文件夹名含 `#`、空格、`&`、逗号是常态：渲染必须转义，URL 必须用 URLSearchParams/encodeURIComponent；folder_path 匹配走全值精确比较（不用 LIKE）
-5. 上传链路优雅降级：7 个环境变量（OSU_CLIENT_ID / OSU_CLIENT_SECRET / SESSION_SECRET / ADMIN_OSU_ID / R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY）任一缺失 → `/api/config` 返回 `uploadEnabled=false` → 前端隐藏登录/上传入口，浏览/试听/下载不受影响（下载清单端点只依赖 bindings + 可选预签名回退）；改上传链路时保持该行为
-6. UI 手写 CSS 变量（osu!editor 橄榄绿：主薄荷 #3fd8a0、点缀粉 #ff7e96、页面橄榄灰 #31362f / 面板炭绿 #1e231e、圆角 6px/12px），token 与组件模式一律以 `DESIGN.md` 为准；不引入 UI 组件库，字体 Comfortaa 自托管（Torus 为商业字体、禁止第三方分发，勿引入真文件），勿依赖外链 CDN
+5. 上传链路优雅降级：6 个必需变量（OSU_CLIENT_ID / OSU_CLIENT_SECRET / SESSION_SECRET / R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY，判定唯一实现 `uploadCapable()`；ADMIN_OSU_ID 可选，只控制管理员权限）任一缺失 → `/api/config` 返回 `uploadEnabled=false` → 前端隐藏登录/上传入口，浏览/试听/下载不受影响（下载清单端点只依赖 bindings + 可选预签名回退）；改上传链路时保持该行为
+6. 测试打在 deep module 的 interface 上（路由 handler、`ledger`、`verify`、`runUpload`、`packZip`、`player`）：D1/R2 用 `src/test/` 的 adapter，不 mock 内部函数；涉及 D1/R2 的改动须用 `calls` 断言子请求预算
+7. UI 手写 CSS 变量（osu!editor 橄榄绿：主薄荷 #3fd8a0、点缀粉 #ff7e96、页面橄榄灰 #31362f / 面板炭绿 #1e231e、圆角 6px/12px），token 与组件模式一律以 `DESIGN.md` 为准；不引入 UI 组件库，字体 Comfortaa 自托管（Torus 为商业字体、禁止第三方分发，勿引入真文件），勿依赖外链 CDN
 
 ## Git 纪律
 
@@ -56,7 +59,9 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 ## 已知坑
 
-- **子请求预算**：免费计划单请求上限 50 子请求，D1/R2 binding 调用都计入——服务端任何循环逐条 `.run()`/`.get()` 的写法在大包（2400+ 文件）必崩，一律 `batch()` 分批（250 语句/批）；核验类读 R2 用 `list` 前缀分页（1000 对象/次），逐对象 head+get 只允许小额抽查（参考 `upload/done` 的预算注释）
+- **子请求预算**：免费计划单请求上限 50 子请求，D1/R2 binding 调用都计入——服务端任何循环逐条 `.run()`/`.get()`/`R2.delete()` 的写法在大包（2400+ 文件）必崩，一律 `batch()` 分批（250 语句/批）、R2 `delete(keys[])`（≤1000 key/次）；核验读 R2 的策略与预算见 `verify.ts` 头注与 ADR 0004
+- `wrangler pages dev` 会自动加载当前目录的 `.env`，把真实密钥注入本地进程：本地 e2e 一律在临时目录（复制 wrangler.toml）启动，`--persist-to` 指向独立状态目录，只用 `-b` 传假值
+- headless Chromium 下 `showSaveFilePicker` 存在但永不 resolve：自动化测整包下载需先在页面内把它置 `undefined`，走 Blob 兜底
 - `wrangler d1 execute` 可能假失败（报语法错但实际写入成功）：执行后必须 SELECT 验证；批量写入改走 D1 HTTP API
 - `wrangler r2 object` 线上操作必须加 `--remote`，否则写进本地模拟器；本地模拟状态在 `.wrangler/state`，schema 变更后旧库要整个重置再跑 schema.sql（CREATE IF NOT EXISTS 不会补列）
 - Pages Git 集成的构建命令在项目级 build_config（面板 Build configurations / API），wrangler.toml 不承载该字段；Node 版本钉在 `.node-version`（用大版本号如 22，勿用精确补丁号——镜像未必收录）
@@ -68,6 +73,8 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 ## 先读再改
 
+- 领域术语（包/文件夹/blob/影子包/对齐/秒传…）：`CONTEXT.md`——命名新 module、写文案与注释时沿用其中的词
+- 已定架构决策：`docs/adr/`（浏览器端打包、内容寻址 + 绝对对齐、影子包附加、只核验新 blob）——改动若与某条 ADR 冲突，先与用户确认，再新增 ADR 取代旧条目
 - 上传/附加/合并/删除/配额/去重方案：`docs/tech-proposal.md`（设计期快照，实现以代码为准）
 - 需求口径与决策记录：`docs/requirements-consensus.md`（设计期快照，P10-P13 为 v4 增补）
 - 视觉与组件规范：`DESIGN.md`；表结构变更：`schema.sql`；CSP 与适配器：`svelte.config.js`；子请求预算与核验取舍：`src/routes/api/upload/done/+server.ts` 头注
