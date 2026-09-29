@@ -14,7 +14,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 ## 本地开发与部署
 
 - 本地：`pnpm install` → `cp .env.example .env` 并填入 R2 三项（ACCOUNT_ID / ACCESS_KEY_ID / SECRET_ACCESS_KEY）即可跑通浏览/试听/下载；OAuth 项留空时登录/上传入口自动隐藏
-- 部署走 Pages Git 集成：推送 main 分支自动构建，配置全在 `wrangler.toml`（构建命令、输出目录、R2/D1 bindings）
+- 部署走 Pages Git 集成：推送 main 分支自动构建；**构建命令（`pnpm build`）配置在 Pages 项目构建设置里（面板/API 的 build_config），不在 wrangler.toml**——wrangler.toml 只承载输出目录、compatibility 与 R2/D1 bindings
 - 运行时需在 Pages 配 7 个 Production 加密变量：`OSU_CLIENT_ID`、`OSU_CLIENT_SECRET`、`SESSION_SECRET`、`ADMIN_OSU_ID`、`R2_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`（`SESSION_SECRET` 用 `openssl rand -hex 32` 生成）
 - osu! OAuth 回调地址：`https://<域名>/api/auth/callback`（默认按请求 origin 推导，`OSU_REDIRECT_URI` 一般不用配）
 - D1 初始化/变更：执行 `schema.sql`，执行后必须 SELECT 验证（见下文已知坑）
@@ -45,7 +45,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 - `wrangler d1 execute` 可能假失败（报语法错但实际写入成功）：执行后必须 SELECT 验证；批量写入改走 D1 HTTP API
 - `wrangler r2 object` 操作必须加 `--remote`，否则写进本地模拟器
-- `wrangler.toml` 的 `[build] command = "pnpm build"` 是 Pages Git 集成的构建入口，勿删
+- Pages Git 集成的构建命令在项目级 build_config（面板 Build configurations / API），wrangler.toml 不承载该字段；Node 版本钉在 `.node-version`（用大版本号如 22，勿用精确补丁号——镜像未必收录）
 - `.svelte-kit/` 是构建产物（已 gitignore）：安全扫描在其上报告的 SSRF/命令注入均为误报（那是浏览器端 bundle）
 - R2 CORS 已配 `https://*.pages.dev` 与 `http://localhost:5173`；更换上传/调试域名需同步修改
 
