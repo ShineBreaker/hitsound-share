@@ -14,7 +14,7 @@ export const MIME_BY_EXT: Record<AudioExt, string> = {
 // 防滥用上限（按真实素材校准：lasse 库 497MB/2429 文件）
 export const MAX_ENTRIES = 5000;
 export const MAX_AUDIO_BYTES = 1024 * 1024 * 1024; // 单包音频累计 ≤1GB
-export const MAX_ZIP_BYTES = 100 * 1024 * 1024; // 上传 zip ≤100MB（产品共识 P1）
+export const MAX_ZIP_BYTES = 500 * 1024 * 1024; // 上传 zip ≤500MB（实际大包约 300MB，2026-09 从 100MB 放开）
 export const GLOBAL_CAP_BYTES = 8 * 1024 * 1024 * 1024; // 全局水位 ≥8GB 拒新上传
 export const PKGS_PER_DAY = 5; // 每用户 5 包/天
 export const PENDING_TTL_H = 24; // pending 懒清理阈值

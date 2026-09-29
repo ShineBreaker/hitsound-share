@@ -7,6 +7,7 @@ const zh = {
 	'app.tagline': 'osu! 铺面音效共享',
 	'app.login': '登录',
 	'app.upload': '上传',
+	'app.github': '在 GitHub 上反馈问题',
 
 	// 目录树面板
 	'tree.title': '音效库',
@@ -43,12 +44,14 @@ const zh = {
 	'auth.loginRequired': '请先登录',
 
 	// 上传对话框
-	'upload.title': '上传音效包',
-	'upload.pick': '选择 zip 压缩包',
-	'upload.hint': '仅支持 zip（≤100MB），包内 wav / ogg / mp3 会被收录，其余文件跳过',
+	'upload.title': '上传音效',
+	'upload.pick': '选择 zip 或音频文件',
+	'upload.hint': '支持 zip 整包或单个 wav / ogg / mp3 文件（≤500MB），zip 内非音频文件会被跳过',
+	'upload.groupName': '分组名称',
+	'upload.start': '开始上传',
 	'upload.parsing': '正在解析 {n}/{total} 个文件…',
 	'upload.uploading': '正在上传 {n}/{total} 个文件…',
-	'upload.uploadingZip': '正在上传压缩包…',
+	'upload.uploadingZip': '正在完成上传…',
 	'upload.finalizing': '正在核验入库…',
 	'upload.done': '上传完成！',
 	'upload.doneHint': '点击下方按钮刷新页面查看',
@@ -57,15 +60,20 @@ const zh = {
 	'upload.retry': '重新选择',
 	'upload.skipped': '跳过 {count} 个非音频文件',
 	'upload.failed': '上传失败',
+	'upload.log.title': '详细日志',
+	'upload.log.copy': '复制日志',
+	'upload.log.copied': '已复制',
+	'upload.log.copyFailed': '复制失败',
+	'upload.log.copyHint': '复制日志全文，可粘贴到 GitHub issue 反馈',
 
 	// 上传错误码 → 中文
 	'upload.err.bad_body': '请求数据无效',
 	'upload.err.bad_name': '包名无效（1-100 字符）',
-	'upload.err.bad_zip_size': '压缩包大小超出限制（≤100MB）',
+	'upload.err.bad_zip_size': '文件大小超出限制（≤500MB）',
 	'upload.err.too_many_entries': '文件数超出限制（≤5000）',
 	'upload.err.too_large': '音频总大小超出限制（≤1GB）',
 	'upload.err.bad_path': '存在非法路径的文件',
-	'upload.err.bad_ext': '存在不支持的文件格式',
+	'upload.err.bad_ext': '不支持的文件格式（仅 zip / wav / ogg / mp3）',
 	'upload.err.bad_hash': '文件校验信息无效',
 	'upload.err.bad_size': '文件大小信息无效',
 	'upload.err.bad_peaks': '波形数据无效',
@@ -77,9 +85,9 @@ const zh = {
 	'upload.err.manifest_failed': '提交清单失败，请重试',
 	'upload.err.put_failed': '文件传输失败，请重试',
 	'upload.err.blob_mismatch': '部分文件校验不一致，请重新上传',
-	'upload.err.zip_missing': '压缩包未收到，请重试',
-	'upload.err.zip_mismatch': '压缩包校验不一致，请重试',
-	'upload.err.zip_too_large': '压缩包实际大小超出限制（≤100MB）',
+	'upload.err.zip_missing': '文件未收到，请重试',
+	'upload.err.zip_mismatch': '文件校验不一致，请重试',
+	'upload.err.zip_too_large': '文件实际大小超出限制（≤500MB）',
 	'upload.err.network': '网络错误，请重试',
 
 	// 我的上传

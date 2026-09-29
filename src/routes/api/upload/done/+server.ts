@@ -1,6 +1,6 @@
 // POST /api/upload/done：闭环核验后置 visible 并对齐 refcount。
 // blob 清单从 D1（该包 files 行）自取，不信前端；核验 = R2 head 实际大小比对 +
-// 首 16 字节魔数（RIFF/OggS/ID3|帧同步）；original.zip 无条件限制实测大小 ≤100MB
+// 首 16 字节魔数（RIFF/OggS/ID3|帧同步）；original.zip 无条件限制实测大小 ≤500MB
 // （manifest 声明值不可信，预签名 PUT 不签 Content-Length）+ PK 头。
 // refcount 落账用「绝对对齐」（= 全库 visible 包引用数）：done 重放幂等，批间失败重试
 // 不会双加，并可自愈历史偏差
@@ -85,7 +85,7 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 		});
 		if (bad.length > 0) return json({ error: 'blob_mismatch', bad }, { status: 400 });
 
-		// original.zip 核验：存在 + 无条件限制实测大小 ≤100MB + PK 头。
+		// original.zip 核验：存在 + 无条件限制实测大小 ≤500MB + PK 头。
 		// （不依赖可选的声明 zipSize——预签名 PUT 不签 Content-Length，实测值才作数）
 		const zipKey = `packages/${pkg.id}/original.zip`;
 		const zipHead = await env.HITSOUND_FILES.head(zipKey);
