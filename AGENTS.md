@@ -38,7 +38,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 ## Git 纪律
 
-- 中文 conventional commit，末尾附 `Co-authored-by: ZCode (GLM-5.3) <noreply@z.ai>`
+- 中文 conventional commit，末尾附 Co-authored-by trailer：`Co-authored-by: <宿主名> (<模型名>) <noreply@z.ai>`——**按提交时的实际宿主/模型填写**，禁止照抄本文件或其他文档中的字面量示例
 - 严禁提交 `.env` / `node_modules` / `.svelte-kit`；不执行 git push（由用户执行）；禁用 rm -rf、git reset --hard、sudo
 
 ## 已知坑
@@ -51,8 +51,8 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 ## 先读再改
 
-- 上传/删除/配额/去重方案：`.agents/workfile/main/tech-proposal.md`（只读）
-- 需求口径与决策记录：`.agents/workfile/main/requirements-consensus.md`（只读）
+- 上传/删除/配额/去重方案：`docs/tech-proposal.md`（设计期快照，实现以代码为准）
+- 需求口径与决策记录：`docs/requirements-consensus.md`（设计期快照）
 - 表结构变更：`schema.sql`；CSP 与适配器：`svelte.config.js`
 
 ## 技能索引
