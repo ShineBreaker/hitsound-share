@@ -5,19 +5,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getEnv, blobKey } from '$lib/server/media';
-import { getSecrets, type Secrets } from '$lib/server/env';
-import { presignGet, type R2Secrets } from '$lib/server/upload';
-
-/** 凑齐 R2 三项才走预签名直连，否则回退同源代理（浏览/下载不依赖上传链路配置） */
-function r2Secrets(s: Partial<Secrets>): R2Secrets | null {
-	return s.R2_ACCOUNT_ID && s.R2_ACCESS_KEY_ID && s.R2_SECRET_ACCESS_KEY
-		? {
-				R2_ACCOUNT_ID: s.R2_ACCOUNT_ID,
-				R2_ACCESS_KEY_ID: s.R2_ACCESS_KEY_ID,
-				R2_SECRET_ACCESS_KEY: s.R2_SECRET_ACCESS_KEY
-			}
-		: null;
-}
+import { getSecrets, pickR2Secrets } from '$lib/server/env';
+import { presignGet } from '$lib/server/upload';
 
 interface FileEntry {
 	path: string; // folder_path/name（zip 内相对路径）
@@ -57,12 +46,17 @@ export const GET: RequestHandler = async ({ params, platform }) => {
 	}
 	if (files.length === 0) return json({ error: 'package_not_found' }, { status: 404 });
 
-	// 预签名 GET 每个不同 URL ~800B；清单即时生成随包内容变化，不做缓存
-	const r2 = r2Secrets(getSecrets(platform));
-	const urls: Record<string, string> = {};
-	for (const [hash, ext] of hashExt) {
-		urls[hash] = r2 ? await presignGet(r2, blobKey(hash, ext)) : `/api/blob/${hash}/${ext}`;
-	}
+	// 预签名 GET 每个不同 URL ~800B；清单即时生成随包内容变化，不做缓存。
+	// R2 三项凑齐才走预签名直连，否则回退同源代理（浏览/下载不依赖上传链路配置）
+	const r2 = pickR2Secrets(getSecrets(platform));
+	const urls = Object.fromEntries(
+		await Promise.all(
+			[...hashExt].map(async ([hash, ext]) => [
+				hash,
+				r2 ? await presignGet(r2, blobKey(hash, ext)) : `/api/blob/${hash}/${ext}`
+			])
+		)
+	);
 
 	return json({ name: pkg.name, files, urls }, { headers: { 'Cache-Control': 'no-store' } });
 };

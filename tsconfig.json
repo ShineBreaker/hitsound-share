@@ -10,5 +10,7 @@
 		"sourceMap": true,
 		"strict": true,
 		"moduleResolution": "bundler"
-	}
+	},
+	// 测试文件走 vitest（不经 tsc）：src/test 适配器用 node:sqlite/node:fs，项目无 @types/node
+	"exclude": ["src/test/**/*.ts", "src/**/*.test.ts"]
 }

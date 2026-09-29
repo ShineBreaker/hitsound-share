@@ -38,3 +38,29 @@ export function getSecrets(platform: App.Platform | undefined): Partial<Secrets>
 export function isAdmin(secrets: Partial<Secrets>, osuId: number): boolean {
 	return Boolean(secrets.ADMIN_OSU_ID && secrets.ADMIN_OSU_ID === String(osuId));
 }
+
+/** 预签名所需的 R2 三项（getSecrets 的子集，凑齐即可签名） */
+export type R2Secrets = Pick<Secrets, 'R2_ACCOUNT_ID' | 'R2_ACCESS_KEY_ID' | 'R2_SECRET_ACCESS_KEY'>;
+
+/** 上传链路凭证齐全（6 项必需；ADMIN_OSU_ID / OSU_REDIRECT_URI 可选不参与） */
+export function uploadCapable(s: Partial<Secrets>): s is Partial<Secrets> & R2Secrets {
+	return Boolean(
+		s.OSU_CLIENT_ID &&
+			s.OSU_CLIENT_SECRET &&
+			s.SESSION_SECRET &&
+			s.R2_ACCOUNT_ID &&
+			s.R2_ACCESS_KEY_ID &&
+			s.R2_SECRET_ACCESS_KEY
+	);
+}
+
+/** R2 三项齐 → 预签名可用，否则 null（调用方回退 /api/blob 同源代理） */
+export function pickR2Secrets(s: Partial<Secrets>): R2Secrets | null {
+	return s.R2_ACCOUNT_ID && s.R2_ACCESS_KEY_ID && s.R2_SECRET_ACCESS_KEY
+		? {
+				R2_ACCOUNT_ID: s.R2_ACCOUNT_ID,
+				R2_ACCESS_KEY_ID: s.R2_ACCESS_KEY_ID,
+				R2_SECRET_ACCESS_KEY: s.R2_SECRET_ACCESS_KEY
+			}
+		: null;
+}

@@ -93,6 +93,22 @@ const zh = {
 	'upload.log.copyFailed': '复制失败',
 	'upload.log.copyHint': '复制日志全文，可粘贴到 GitHub issue 反馈',
 
+	// 上传管线日志行（upload-pipeline 产出；PUT 只记 origin+path，签名参数不落日志）
+	'upload.log.unpacked': '解包完成：{n} 个音频 / 跳过 {skipped} 个',
+	'upload.log.noAudio': '压缩包内没有可收录的音频文件（wav / ogg / mp3）',
+	'upload.log.parsed': '解析完成：{n} 个文件（{ext}，sha256 {hash}…）',
+	'upload.log.manifest': 'POST /api/upload → {status}（待直传 {missing}，秒传 {existing}{appending}）',
+	'upload.log.appending': '，附加模式',
+	'upload.log.manifestFail': 'POST /api/upload → {status} {error}',
+	'upload.log.missingBlob': '本地缺少 blob 数据：{hash}…',
+	'upload.log.putRetry': 'PUT {url} → {status}，{ms}ms 后重试',
+	'upload.log.putFail': 'PUT {url} → {status} {detail}',
+	'upload.log.putDone': '音频直传完成：{n} 个',
+	'upload.log.doneOk': 'POST /api/upload/done → {status}',
+	'upload.log.doneFail': 'POST /api/upload/done → {status} {error}',
+	'upload.log.archiveFail': '解包失败[{code}]：{msg}',
+	'upload.log.interrupted': '异常中断：{msg}',
+
 	// 上传错误码 → 中文
 	'upload.err.bad_body': '请求数据无效',
 	'upload.err.bad_name': '包名无效（1-100 字符）',
@@ -133,6 +149,7 @@ const zh = {
 	'my.confirmDelete': '确定删除「{name}」？该操作不可恢复。',
 	'my.deleteFailed': '删除失败，请重试',
 	'my.deleted': '已删除',
+	'my.refresh': '刷新',
 
 	// 元数据展示
 	'meta.unknown': '—',

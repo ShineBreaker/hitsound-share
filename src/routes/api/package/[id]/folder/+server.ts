@@ -4,7 +4,7 @@
 // to 已存在 = 合并文件夹（允许：把一个小类并入另一个小类）
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { requirePackageOwner } from '$lib/server/packages';
+import { requirePackageOwner } from '$lib/server/guard';
 
 /** 路径合法性：拒目录穿越/绝对路径/反斜杠/空段，长度 ≤512（与 manifest 路径校验同口径） */
 function validFolderPath(p: unknown): p is string {
@@ -14,8 +14,8 @@ function validFolderPath(p: unknown): p is string {
 }
 
 export const PATCH: RequestHandler = async ({ params, request, platform, cookies }) => {
-	const guard = await requirePackageOwner(platform, cookies, params.id);
-	if ('error' in guard) return json({ error: guard.error }, { status: guard.status });
+	const g = await requirePackageOwner(platform, cookies, params.id);
+	if (g instanceof Response) return g;
 
 	const body = (await request.json().catch(() => null)) as { from?: unknown; to?: unknown } | null;
 	// '' = 包根，包根不可改名（改包名走 PATCH /api/package/<id>）
@@ -27,10 +27,10 @@ export const PATCH: RequestHandler = async ({ params, request, platform, cookies
 		return json({ error: 'bad_folder' }, { status: 400 });
 	}
 
-	const { results } = await guard.env.DB.prepare(
+	const { results } = await g.env.DB.prepare(
 		'SELECT DISTINCT folder_path FROM files WHERE package_id = ?1'
 	)
-		.bind(guard.pkg.id)
+		.bind(g.pkg.id)
 		.all<{ folder_path: string }>();
 
 	// 受影响 = 恰为 from 或其子路径（from + '/' 前缀）；全值匹配避免 'a' 误伤 'ab/c'
@@ -44,12 +44,12 @@ export const PATCH: RequestHandler = async ({ params, request, platform, cookies
 	if (moves.length === 0) return json({ error: 'folder_not_found' }, { status: 404 });
 
 	const stmts = moves.map((m) =>
-		guard.env.DB.prepare(
+		g.env.DB.prepare(
 			'UPDATE files SET folder_path = ?1 WHERE package_id = ?2 AND folder_path = ?3'
-		).bind(m.to, guard.pkg.id, m.from)
+		).bind(m.to, g.pkg.id, m.from)
 	);
 	for (let i = 0; i < stmts.length; i += 50) {
-		await guard.env.DB.batch(stmts.slice(i, i + 50));
+		await g.env.DB.batch(stmts.slice(i, i + 50));
 	}
 	return json({ ok: true, moved: moves.length });
 };

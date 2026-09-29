@@ -78,17 +78,47 @@ export function renameFolder(pkgId: string, from: string, to: string): Promise<v
 	return mutate(`/api/package/${encodeURIComponent(pkgId)}/folder`, 'PATCH', { from, to });
 }
 
-// 波形模块级缓存：跨文件夹切换复用；存 Promise 防同 id 并发重复请求
+// 波形批量取数：16ms 窗口内请求的 id 合并成一次 /api/waveform?ids=… 调用（每批 ≤100，
+// 与端点上限一致）；模块级缓存存 Promise 防同 id 并发重复请求；失败 resolve null 并逐出缓存
+const PEAKS_FLUSH_MS = 16;
+const PEAKS_BATCH = 100;
 const peaksCache = new Map<string, Promise<number[] | null>>();
+let peaksQueue = new Map<string, Array<(v: number[] | null) => void>>();
+let peaksTimer: ReturnType<typeof setTimeout> | null = null;
+
 export function fetchPeaks(id: string): Promise<number[] | null> {
 	let p = peaksCache.get(id);
 	if (!p) {
-		p = getJSON<{ peaks: number[] | null }>(`/api/waveform/${encodeURIComponent(id)}`)
-			.then((r) => r.peaks)
-			.catch(() => null);
+		p = new Promise<number[] | null>((resolve) => {
+			const list = peaksQueue.get(id) ?? [];
+			list.push(resolve);
+			peaksQueue.set(id, list);
+		});
 		peaksCache.set(id, p);
+		peaksTimer ??= setTimeout(() => void flushPeaks(), PEAKS_FLUSH_MS);
 	}
 	return p;
+}
+
+async function flushPeaks(): Promise<void> {
+	peaksTimer = null;
+	const batch = peaksQueue;
+	peaksQueue = new Map();
+	const ids = [...batch.keys()];
+	for (let i = 0; i < ids.length; i += PEAKS_BATCH) {
+		const chunk = ids.slice(i, i + PEAKS_BATCH);
+		let res: Record<string, number[] | null> | null = null;
+		try {
+			const q = new URLSearchParams({ ids: chunk.join(',') });
+			res = (await getJSON<{ peaks: Record<string, number[] | null> }>(`/api/waveform?${q}`)).peaks;
+		} catch {
+			res = null;
+		}
+		for (const id of chunk) {
+			if (res === null) peaksCache.delete(id); // 失败逐出缓存，下次可见时可重试
+			for (const resolve of batch.get(id) ?? []) resolve(res?.[id] ?? null);
+		}
+	}
 }
 
 /** 由「包 + DISTINCT folder_path 列表」构建前端树（根 = 包，children = 文件夹层级） */

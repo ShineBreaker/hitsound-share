@@ -1,11 +1,10 @@
 <script lang="ts">
 	// 主页：左树（顶层 = 各包 → 包内文件夹层级）+ 右表（当前选中文件夹的文件）
 	// 数据全部客户端运行时拉取（shell 预渲染只烘壳，不烘数据——config 依赖部署期环境变量，
-	// 树数据需随库更新）；播放用单个 Audio 元素逐个点播。
+	// 树数据需随库更新）；播放走共享 player（$lib/player.svelte.ts，与组装面板同一 Audio）。
 	// 整包下载 = 按当前内容实时拼 zip（服务端拼包受免费计划 50 子请求限制不可行）：
-	// 拉清单 → 并发直连 R2 拉去重 blob → fflate 流式 STORE 打包 → Blob 保存
+	// 拉清单 → 并发直连 R2 拉去重 blob → fflate 流式 STORE 打包 → 保存（$lib/zip-save）
 	import { onMount } from 'svelte';
-	import { Zip, ZipDeflate } from 'fflate';
 	import TreeView from '$lib/components/TreeView.svelte';
 	import FileTable from '$lib/components/FileTable.svelte';
 	import KitBuilder from '$lib/components/KitBuilder.svelte';
@@ -21,6 +20,8 @@
 		type TreePackage,
 		type Me
 	} from '$lib/api';
+	import { player } from '$lib/player.svelte';
+	import { saveZip } from '$lib/zip-save';
 	import { t } from '$lib/i18n';
 	import type { FileRow } from '$lib/types';
 
@@ -44,13 +45,7 @@
 	let dlDone = $state(0);
 	let dlTotal = $state(0);
 
-	// 播放器状态（audio 元素在 onMount 创建，避免 SSR 引用 window）
-	let audio: HTMLAudioElement | null = null;
-	let playingId = $state<string | null>(null);
-	let paused = $state(true);
-	let progress = $state(0);
-	let pendingSeek: number | null = null;
-	let playingFile: FileRow | null = null;
+	// 播放器状态在共享 player 上（$state 由 Player 类内部管理）
 
 	const forest = $derived(buildForest(packages));
 	const treeLoading = $derived(!treeLoaded && !treeError);
@@ -122,16 +117,7 @@
 		void loadPage(key, false);
 	}
 
-	/** 并发池：限并发遍历（下载拉取 6 路，兼顾速度与 R2/代理压力） */
-	async function mapPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-		let next = 0;
-		const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-			while (next < items.length) await fn(items[next++]);
-		});
-		await Promise.all(workers);
-	}
-
-	/** 整包下载：清单 → 并发拉取（同 hash 只拉一次，消费完即释放）→ 流式 STORE 打包 → 保存 */
+	/** 整包下载：清单 → saveZip（同 hash 只拉一次，流式 STORE 打包，File System Access 优先） */
 	async function downloadPackage(): Promise<void> {
 		const pkgId = currentPkgId;
 		if (!pkgId || dlState === 'packing') return;
@@ -140,69 +126,20 @@
 		try {
 			const manifest = await fetchZipManifest(pkgId);
 			dlTotal = manifest.files.length;
-
-			// 落盘策略：Chromium 走 File System Access 流式写（内存不随包体线性增长）；
-			// 其余浏览器降级内存 Blob（超大包移动端可能吃紧，可接受）
-			let handle: FileSystemFileHandle | null = null;
-			try {
-				handle = await window.showSaveFilePicker({
-					suggestedName: `${manifest.name || 'package'}.zip`,
-					types: [{ description: 'ZIP', accept: { 'application/zip': ['.zip'] } }]
-				});
-			} catch (e) {
-				if (e instanceof DOMException && e.name === 'AbortError') {
-					dlState = 'idle'; // 用户取消保存对话框，不算失败
-					return;
+			await saveZip(manifest.name || 'package', {
+				entries: manifest.files.map((f) => ({ path: f.path, key: f.hash })),
+				load: async (hash) => {
+					const r = await fetch(manifest.urls[hash]);
+					if (!r.ok) throw new Error(`HTTP ${r.status}`);
+					return new Uint8Array(await r.arrayBuffer());
+				},
+				concurrency: 6, // 6 路并发，兼顾速度与 R2/代理压力
+				onProgress: (done, total) => {
+					dlDone = done;
+					dlTotal = total;
 				}
-				handle = null;
-			}
-			const writable = handle ? await handle.createWritable() : null;
-			const chunks: Uint8Array[] = [];
-			let writeChain = Promise.resolve();
-			const zip = new Zip((err, dat) => {
-				if (err) throw err;
-				if (writable) writeChain = writeChain.then(() => writable.write(dat));
-				else chunks.push(dat);
 			});
-			// hash → 拉取 Promise（去重）+ 剩余引用计数（全部条目消费完即释放缓存）
-			const bufCache = new Map<string, Promise<Uint8Array>>();
-			const remaining = new Map<string, number>();
-			for (const f of manifest.files) remaining.set(f.hash, (remaining.get(f.hash) ?? 0) + 1);
-			const getBuf = (hash: string): Promise<Uint8Array> => {
-				let p = bufCache.get(hash);
-				if (!p) {
-					p = fetch(manifest.urls[hash]).then(async (r) => {
-						if (!r.ok) throw new Error(`HTTP ${r.status}`);
-						return new Uint8Array(await r.arrayBuffer());
-					});
-					bufCache.set(hash, p);
-				}
-				return p;
-			};
-			// 条目乱序写入 zip 是合法的（central directory 记录名字，无顺序要求）
-			await mapPool(manifest.files, 6, async (f) => {
-				const data = await getBuf(f.hash);
-				const entry = new ZipDeflate(f.path, { level: 0 }); // STORE 直通，CPU 仅 crc32
-				zip.add(entry);
-				entry.push(data, true);
-				dlDone += 1;
-				const left = (remaining.get(f.hash) ?? 1) - 1;
-				remaining.set(f.hash, left);
-				if (left === 0) bufCache.delete(f.hash);
-			});
-			zip.end(); // 同步流：返回时 central directory 已收入 chunks/写链
-			if (writable) {
-				await writeChain;
-				await writable.close();
-			} else {
-				const blob = new Blob(chunks as BlobPart[], { type: 'application/zip' });
-				const a = document.createElement('a');
-				a.href = URL.createObjectURL(blob);
-				a.download = `${manifest.name || 'package'}.zip`;
-				a.click();
-				URL.revokeObjectURL(a.href);
-			}
-			dlState = 'idle';
+			dlState = 'idle'; // 'cancelled' 也不算失败
 		} catch {
 			dlState = 'error';
 		}
@@ -248,62 +185,17 @@
 		return true;
 	}
 
-	/** 点行：未播→播、播放中→暂停、暂停→继续 */
+	/** 点行：未播→播、播放中→暂停、暂停→继续（key = file.id） */
 	function togglePlay(file: FileRow): void {
-		if (!audio) return;
-		if (playingId === file.id) {
-			if (audio.paused) void audio.play();
-			else audio.pause();
-			return;
-		}
-		playingFile = file;
-		playingId = file.id;
-		pendingSeek = null;
-		// 时长优先用元数据（流式 mp3 的 audio.duration 可能为 Infinity）
-		audio.src = `/f/${encodeURIComponent(file.id)}`;
-		void audio.play();
+		player.toggle(file.id, `/f/${encodeURIComponent(file.id)}`, file.durationS ?? undefined);
 	}
 
 	/** 点波形：当前行直接跳；别的行先播、metadata 就绪后再跳 */
 	function seek(file: FileRow, ratio: number): void {
-		if (!audio) return;
-		if (playingId !== file.id) {
-			togglePlay(file); // 先切换曲目（内部会清 pendingSeek）
-			pendingSeek = ratio; // 再记跳播比例，等 loadedmetadata 应用
-			return;
-		}
-		const dur = file.durationS ?? audio.duration;
-		if (Number.isFinite(dur) && dur > 0) audio.currentTime = ratio * dur;
+		player.seek(file.id, `/f/${encodeURIComponent(file.id)}`, ratio, file.durationS ?? undefined);
 	}
 
 	onMount(() => {
-		audio = new Audio();
-		audio.preload = 'metadata';
-		audio.addEventListener('timeupdate', () => {
-			if (!audio || !playingFile) return;
-			const dur = playingFile.durationS ?? audio.duration;
-			progress = Number.isFinite(dur) && dur > 0 ? audio.currentTime / dur : 0;
-		});
-		audio.addEventListener('play', () => (paused = false));
-		audio.addEventListener('pause', () => (paused = true));
-		audio.addEventListener('ended', () => {
-			playingId = null;
-			playingFile = null;
-			progress = 0;
-		});
-		audio.addEventListener('error', () => {
-			// 播放失败（blob 缺失等）：复位，不留假播放态
-			playingId = null;
-			playingFile = null;
-			progress = 0;
-		});
-		audio.addEventListener('loadedmetadata', () => {
-			if (pendingSeek != null && audio && Number.isFinite(audio.duration) && audio.duration > 0) {
-				audio.currentTime = pendingSeek * audio.duration;
-			}
-			pendingSeek = null;
-		});
-
 		// 初始加载树并默认选中第一个包（失败可经树面板重试按钮重走本流程）
 		void initTree();
 		// 登录态：树节点改名按钮的显示判定（失败按未登录处理）
@@ -316,7 +208,12 @@
 		<div class="panel-title"><span>{t('tree.title')}</span></div>
 		<nav class="tree">
 			{#if treeLoading}
-				<div class="hint">{t('table.loading')}</div>
+				<!-- 加载中占位骨架（透明度脉动，不位移） -->
+				<div class="skel-list" aria-hidden="true">
+					{#each [0, 1, 2, 3, 4, 5] as i (i)}
+						<div class="skel skel-tree-row"></div>
+					{/each}
+				</div>
 			{:else if treeError}
 				<div class="hint">
 					{t('error.load')}
@@ -351,7 +248,11 @@
 			</nav>
 			{#if currentPkgId && packages.length > 0}
 				{#if dlState === 'packing'}
-					<button class="btn primary" disabled>
+					<button
+						class="btn primary packing"
+						disabled
+						style:--pct={dlTotal > 0 ? (dlDone / dlTotal) * 100 : 0}
+					>
 						{t('download.packaging', { n: dlDone, total: dlTotal })}
 					</button>
 				{:else}
@@ -369,7 +270,12 @@
 
 		<div class="files-body">
 			{#if loading}
-				<div class="hint">{t('table.loading')}</div>
+				<!-- 文件表加载占位骨架 -->
+				<div class="skel-files" aria-hidden="true">
+					{#each [0, 1, 2, 3, 4, 5, 6, 7] as i (i)}
+						<div class="skel skel-file-row"></div>
+					{/each}
+				</div>
 			{:else if loadError}
 				<div class="hint">
 					{t('error.load')}
@@ -378,9 +284,9 @@
 			{:else}
 				<FileTable
 					{files}
-					{playingId}
-					{paused}
-					{progress}
+					playingId={player.current}
+					paused={player.paused}
+					progress={player.progress}
 					onplay={togglePlay}
 					onseek={seek}
 				/>
@@ -517,52 +423,34 @@
 		font-size: 12px;
 	}
 
-	/* 次级按钮：ghost 浮起；主按钮 .primary：薄荷填充 + 深色文字 */
-	.btn {
-		flex: none;
-		padding: 5px 14px;
-		border: 1px solid transparent;
-		border-radius: var(--radius);
-		background: transparent;
-		color: var(--text-dim);
-		font-size: 13px;
-		text-decoration: none;
-		cursor: pointer;
-		white-space: nowrap;
-		transition:
-			background 0.15s ease,
-			color 0.15s ease,
-			border-color 0.15s ease;
+	/* 按钮基元在 app.css（.btn/.primary/.err/.packing）；这里只留骨架布局 */
+
+	/* 树/文件表加载骨架：长短不一的行列（仅透明度脉动） */
+	.skel-list {
+		padding: 12px 10px;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
 	}
-	.btn:hover {
-		background: var(--bg-l3);
-		color: var(--text);
+	.skel-tree-row {
+		height: 14px;
+		width: 72%;
 	}
-	.btn.primary {
-		background: var(--accent);
-		color: var(--on-accent);
-		font-weight: 700;
+	.skel-tree-row:nth-child(2n) {
+		width: 48%;
+		margin-left: 16px;
 	}
-	.btn.primary:hover {
-		background: var(--accent-bright);
-		color: var(--on-accent);
+	.skel-files {
+		padding: 14px 12px;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
 	}
-	.btn:disabled {
-		opacity: 0.55;
-		cursor: default;
+	.skel-file-row {
+		height: 30px;
 	}
-	.btn.primary:disabled:hover {
-		background: var(--accent);
-		color: var(--on-accent);
-	}
-	/* 打包失败：按钮变粉提示，点击即重试 */
-	.btn.err {
-		background: var(--accent-pink);
-		color: var(--on-accent);
-	}
-	.btn.err:hover {
-		background: var(--accent-pink);
-		color: var(--on-accent);
+	.skel-file-row:nth-child(2n) {
+		width: 88%;
 	}
 
 	.files-body {

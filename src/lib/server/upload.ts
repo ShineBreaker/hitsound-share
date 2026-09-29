@@ -1,6 +1,6 @@
 // 上传链路共享：manifest 强校验 / aws4fetch 预签名 / blob 魔数核验
 import { AwsClient } from 'aws4fetch';
-import type { Secrets } from './env';
+import type { R2Secrets } from './env';
 
 export const AUDIO_EXTS = ['wav', 'ogg', 'mp3'] as const;
 export type AudioExt = (typeof AUDIO_EXTS)[number];
@@ -120,11 +120,13 @@ export function validateManifest(body: unknown): Validated<Manifest> {
 	return { ok: true, value: { name: typeof b.name === 'string' ? b.name : '', appendTo, entries } };
 }
 
-/** 预签名所需的 R2 三项（getSecrets 的子集，凑齐即可签名，不要求上传链路全套） */
-export type R2Secrets = Pick<Secrets, 'R2_ACCOUNT_ID' | 'R2_ACCESS_KEY_ID' | 'R2_SECRET_ACCESS_KEY'>;
-
-/** 生成 R2 S3 预签名 PUT URL（aws4fetch，SigV4 query 签名，限时 10 分钟） */
-export async function presignPut(secrets: R2Secrets, key: string, expiresS = 600): Promise<string> {
+/** R2 S3 预签名（aws4fetch，SigV4 query 签名，纯本地计算不出网） */
+async function presign(
+	secrets: R2Secrets,
+	method: 'PUT' | 'GET',
+	key: string,
+	expiresS: number
+): Promise<string> {
 	const client = new AwsClient({
 		accessKeyId: secrets.R2_ACCESS_KEY_ID,
 		secretAccessKey: secrets.R2_SECRET_ACCESS_KEY,
@@ -135,23 +137,18 @@ export async function presignPut(secrets: R2Secrets, key: string, expiresS = 600
 	const url = new URL(
 		`https://${secrets.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/hitsound-files/${key}?X-Amz-Expires=${expiresS}`
 	);
-	const req = await client.sign(url.toString(), { method: 'PUT', aws: { signQuery: true } });
+	const req = await client.sign(url.toString(), { method, aws: { signQuery: true } });
 	return req.url;
 }
 
-/** 生成 R2 S3 预签名 GET URL（整包下载的浏览器直连拉取；大包耗时长，默认 1 小时） */
-export async function presignGet(secrets: R2Secrets, key: string, expiresS = 3600): Promise<string> {
-	const client = new AwsClient({
-		accessKeyId: secrets.R2_ACCESS_KEY_ID,
-		secretAccessKey: secrets.R2_SECRET_ACCESS_KEY,
-		service: 's3',
-		region: 'auto'
-	});
-	const url = new URL(
-		`https://${secrets.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/hitsound-files/${key}?X-Amz-Expires=${expiresS}`
-	);
-	const req = await client.sign(url.toString(), { method: 'GET', aws: { signQuery: true } });
-	return req.url;
+/** 预签名 PUT URL（浏览器直传 blob；大包直传耗时长，默认 1 小时） */
+export function presignPut(secrets: R2Secrets, key: string, expiresS = 3600): Promise<string> {
+	return presign(secrets, 'PUT', key, expiresS);
+}
+
+/** 预签名 GET URL（整包下载的浏览器直连拉取；大包耗时长，默认 1 小时） */
+export function presignGet(secrets: R2Secrets, key: string, expiresS = 3600): Promise<string> {
+	return presign(secrets, 'GET', key, expiresS);
 }
 
 /** 首字节魔数核验：wav=RIFF、ogg=OggS、mp3=ID3 或 MPEG 帧同步 */

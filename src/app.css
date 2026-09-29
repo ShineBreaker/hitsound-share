@@ -99,3 +99,146 @@ body {
 button {
 	font-family: inherit;
 }
+
+/* ===== UI 基元（组件样式只留差异化微调，不再各写一份） ===== */
+
+/* 按钮：默认透明 ghost（hover 浮起 --bg-l3） */
+.btn {
+	display: inline-block;
+	padding: 5px 14px;
+	border: 1px solid transparent;
+	border-radius: var(--radius);
+	background: transparent;
+	color: var(--text-dim);
+	font-size: 13px;
+	text-decoration: none;
+	cursor: pointer;
+	white-space: nowrap;
+	transition:
+		background 0.15s ease,
+		color 0.15s ease,
+		border-color 0.15s ease;
+}
+.btn:hover {
+	background: var(--bg-l3);
+	color: var(--text);
+}
+
+/* 主按钮：薄荷填充 + 深色文字（编辑器签名样式） */
+.btn.primary {
+	background: var(--accent);
+	color: var(--on-accent);
+	font-weight: 700;
+}
+.btn.primary:hover {
+	background: var(--accent-bright);
+	color: var(--on-accent);
+}
+
+/* 危险操作：ghost，hover 出粉边粉字（填充仅确认后，见 DESIGN.md） */
+.btn.danger:hover {
+	border-color: var(--accent-pink);
+	color: var(--accent-pink);
+}
+
+/* 失败态：粉底提示，点击即重试 */
+.btn.err {
+	background: var(--accent-pink);
+	color: var(--on-accent);
+}
+.btn.err:hover {
+	background: var(--accent-pink);
+	color: var(--on-accent);
+}
+
+.btn:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+.btn:disabled:hover {
+	background: transparent;
+	color: var(--text-dim);
+}
+.btn.primary:disabled,
+.btn.primary:disabled:hover {
+	background: var(--accent);
+	color: var(--on-accent);
+}
+
+/* 对话框里的大号按钮 */
+.btn.lg {
+	padding: 6px 16px;
+}
+
+/* 打包中按钮：--pct 进度填充（accent-deep → accent 渐变）；
+   isolation+z-index:-1 让 ::before 沉到文字下层，填充再高也压不住 label */
+.btn.packing {
+	position: relative;
+	overflow: hidden;
+	isolation: isolate;
+}
+.btn.packing::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	width: calc(var(--pct, 0) * 1%);
+	background: linear-gradient(90deg, var(--accent-deep), var(--accent));
+}
+
+/* 模态对话框：遮罩 + 卡片 + 右上关闭 */
+.dialog-mask {
+	position: fixed;
+	inset: 0;
+	z-index: 100;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgb(9 12 9 / 0.62);
+	backdrop-filter: blur(4px);
+}
+.dialog-card {
+	position: relative;
+	background: var(--bg-l2);
+	border: 1px solid color-mix(in srgb, var(--bg-l3) 55%, transparent);
+	border-radius: var(--radius-lg);
+	padding: 22px 24px;
+	box-shadow: 0 12px 40px rgb(0 0 0 / 0.45);
+}
+.dialog-close {
+	position: absolute;
+	top: 10px;
+	right: 12px;
+	border: none;
+	background: transparent;
+	color: var(--text-faint);
+	font-size: 20px;
+	cursor: pointer;
+}
+.dialog-close:hover {
+	color: var(--text);
+}
+
+/* 加载占位骨架：仅透明度脉动（不位移） */
+.skel {
+	border-radius: var(--radius);
+	background: var(--bg-l3);
+	animation: skel-pulse 1.4s ease-in-out infinite;
+}
+@keyframes skel-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.45;
+	}
+}
+
+/* 减弱动效偏好：停掉跳动指示条与骨架脉动 */
+@media (prefers-reduced-motion: reduce) {
+	.eq i,
+	.skel {
+		animation: none !important;
+	}
+}

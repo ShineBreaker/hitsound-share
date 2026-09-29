@@ -65,9 +65,9 @@
 						{t('auth.logout')}
 					</button>
 				{:else}
-					<a class="btn" href="/api/auth/login">{t('app.login')}</a>
+					<a class="btn lg" href="/api/auth/login">{t('app.login')}</a>
 				{/if}
-				<button class="btn primary" type="button" onclick={onUploadClick}>{t('app.upload')}</button>
+				<button class="btn primary lg" type="button" onclick={onUploadClick}>{t('app.upload')}</button>
 			{/if}
 		</div>
 	</header>
@@ -165,35 +165,7 @@
 		gap: 8px;
 	}
 
-	.btn {
-		padding: 6px 16px;
-		border: 1px solid transparent;
-		border-radius: var(--radius);
-		background: transparent;
-		color: var(--text-dim);
-		font-size: 13px;
-		cursor: pointer;
-		text-decoration: none;
-		display: inline-block;
-		transition:
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-	.btn:hover {
-		background: var(--bg-l3);
-		color: var(--text);
-	}
-
-	/* 主按钮：编辑器同款薄荷填充 + 深色文字 */
-	.btn.primary {
-		background: var(--accent);
-		color: var(--on-accent);
-		font-weight: 700;
-	}
-	.btn.primary:hover {
-		background: var(--accent-bright);
-		color: var(--on-accent);
-	}
+	/* 按钮基元在 app.css（.btn/.primary/.lg），顶栏不再自带一份 */
 
 	/* 已登录用户名按钮（打开我的上传） */
 	.user {

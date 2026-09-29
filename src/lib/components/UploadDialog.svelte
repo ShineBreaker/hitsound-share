@@ -1,12 +1,18 @@
 <script lang="ts">
-	// 上传对话框：选 zip / rar 整包或单个音频文件 → $lib/archive 按魔数解包（rar 走 UnRAR wasm
-	// 按需加载；zip 文件名 GBK 兜底）→ 每文件 sha256 + 元数据
-	// （wav 手解 RIFF 头，decodeAudioData 得时长/声道/波形；解码失败的文件元数据置 null 仍可上传）
-	// → POST /api/upload（manifest，可选 appendTo 附加到现有分组）→ 浏览器直传缺失 blob
-	// （预签名 PUT）→ POST /api/upload/done（服务端核验，附加模式在此合并进目标包）→ 完成刷新。
-	// v4 起不再上传 original.zip（整包下载改为实时打包）
-	import { readArchive, ArchiveError } from '$lib/archive';
+	// 上传对话框（纯 UI 壳）：文件选择/拖放 → confirm（新建 / 附加到现有分组）→
+	// runUpload（$lib/upload-pipeline：解包 → sha256+元数据 → manifest → 直传 → done，
+	// 进度与日志经 onEvent 上报）→ 完成刷新。v4 起不再上传 original.zip。
+	// 忙碌中 Esc 不关对话框（防误触中断进行中上传）
+	import { onMount } from 'svelte';
 	import { loadUnrarWasm } from '$lib/unrar-wasm';
+	import { decodeMeta } from '$lib/audio-meta';
+	import {
+		runUpload,
+		UploadError,
+		ARCHIVE_EXTS,
+		fileExt,
+		type UploadTarget
+	} from '$lib/upload-pipeline';
 	import { t } from '$lib/i18n';
 
 	interface Props {
@@ -75,15 +81,6 @@
 		return `${n} B`;
 	}
 
-	function safeUrl(url: string): string {
-		try {
-			const u = new URL(url, location.href);
-			return u.origin + u.pathname;
-		} catch {
-			return url;
-		}
-	}
-
 	async function copyLogs(): Promise<void> {
 		const text = logs.map((l) => `[${l.time}] ${l.level === 'error' ? '✗' : '·'} ${l.msg}`).join('\n');
 		try {
@@ -100,114 +97,10 @@
 		progressTotal > 0 ? Math.round((progressN / progressTotal) * 100) : 0
 	);
 
-	/** wav 手解 RIFF 头：fmt 块的声道/采样率/位深 + byteRate（算时长） */
-	function parseWavHeader(d: Uint8Array): {
-		channels: number;
-		sampleRate: number;
-		bitDepth: number;
-		byteRate: number;
-	} | null {
-		if (d.length < 12) return null;
-		const tag = (o: number) => String.fromCharCode(d[o], d[o + 1], d[o + 2], d[o + 3]);
-		if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return null;
-		const dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
-		let off = 12;
-		while (off + 8 <= d.length) {
-			const id = tag(off);
-			const size = dv.getUint32(off + 4, true);
-			if (id === 'fmt ' && off + 24 <= d.length) {
-				return {
-					channels: dv.getUint16(off + 10, true),
-					sampleRate: dv.getUint32(off + 12, true),
-					bitDepth: dv.getUint16(off + 22, true),
-					byteRate: dv.getUint32(off + 16, true)
-				};
-			}
-			off += 8 + size + (size % 2); // chunk 按 2 字节对齐
-		}
-		return null;
-	}
-
-	async function sha256Hex(d: Uint8Array): Promise<string> {
-		// slice 复制防 ArrayBuffer 被 detach（digest 不 detach，防御性）
-		const h = await crypto.subtle.digest('SHA-256', d.slice().buffer as ArrayBuffer);
-		return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
-	}
-
-	/** decodeAudioData：时长/采样率/声道 + 200 桶峰值波形；解码失败返回 null */
-	async function decodeMeta(
-		data: Uint8Array
-	): Promise<{ durationS: number; sampleRate: number; channels: number; peaks: number[] } | null> {
-		try {
-			// 借 OfflineAudioContext 的解码器（无需用户手势）；decodeAudioData 会接管 buffer，传副本
-			const ctx = new OfflineAudioContext(1, 1, 44100);
-			const buf = await ctx.decodeAudioData(data.slice().buffer as ArrayBuffer);
-			const ch = buf.getChannelData(0);
-			const n = 200;
-			const peaks: number[] = [];
-			const step = Math.max(1, Math.floor(ch.length / n));
-			for (let i = 0; i < n; i++) {
-				let m = 0;
-				const s = i * step;
-				for (let j = 0; j < step && s + j < ch.length; j++) {
-					const v = Math.abs(ch[s + j]);
-					if (v > m) m = v;
-				}
-				peaks.push(Math.round(Math.min(1, m) * 1000) / 1000);
-			}
-			return {
-				durationS: Math.round(buf.duration * 1000) / 1000,
-				sampleRate: buf.sampleRate,
-				channels: buf.numberOfChannels,
-				peaks
-			};
-		} catch {
-			return null;
-		}
-	}
-
-	interface Entry {
-		path: string;
-		hash: string;
-		size: number;
-		ext: string;
-		durationS: number | null;
-		sampleRate: number | null;
-		bitDepth: number | null;
-		channels: number | null;
-		peaks: number[] | null;
-	}
-
-	/** 构造单文件条目：解码元数据优先；wav 且解码失败时回退 RIFF 手解（时长 = 大小/字节率） */
-	async function buildEntry(path: string, d: Uint8Array, ext: string, hash: string): Promise<Entry> {
-		const wav = ext === 'wav' ? parseWavHeader(d) : null;
-		const dec = await decodeMeta(d);
-		return {
-			path,
-			hash,
-			size: d.length,
-			ext,
-			durationS: dec?.durationS ?? (wav && wav.byteRate > 0 ? d.length / wav.byteRate : null),
-			sampleRate: dec?.sampleRate ?? wav?.sampleRate ?? null,
-			bitDepth: dec ? (ext === 'wav' ? (wav?.bitDepth ?? null) : null) : (wav?.bitDepth ?? null),
-			channels: dec?.channels ?? wav?.channels ?? null,
-			peaks: dec?.peaks ?? null
-		};
-	}
-
 	function fail(key: string): void {
 		phase = 'error';
 		errorKey = key;
 	}
-
-	/** 取小写扩展名；无扩展名返回空串 */
-	function fileExt(name: string): string {
-		const i = name.lastIndexOf('.');
-		return i === -1 ? '' : name.slice(i + 1).toLowerCase();
-	}
-
-	// 压缩包与单音频分流仍按扩展名（.rar 允许进入）；压缩包内部格式由 readArchive 按魔数判定
-	const ARCHIVE_EXTS = ['zip', 'rar'];
 
 	/** 选定文件（文件选择器 / 拖放区共用入口） */
 	function chooseFile(file: File): void {
@@ -238,142 +131,38 @@
 		const file = pendingFile;
 		const name = groupName.trim();
 		if (!file) return;
-		const single = !ARCHIVE_EXTS.includes(fileExt(file.name));
 		if (mode === 'append') {
 			if (!appendTarget) return;
 			pendingFile = null;
 			addLog('info', `附加到现有分组：${appendTarget}`);
-			void startUpload(file, single, appendTarget);
+			void startUpload(file, { kind: 'append', packageId: appendTarget });
 			return;
 		}
 		if (!name) return;
 		pendingFile = null;
 		addLog('info', `分组名：${name}`);
-		void startUpload(file, single, null);
+		void startUpload(file, { kind: 'new', name });
 	}
 
-	async function startUpload(file: File, single: boolean, appendTo: string | null): Promise<void> {
+	async function startUpload(file: File, target: UploadTarget): Promise<void> {
 		phase = 'parsing';
 		skippedCount = 0;
 		try {
-			const entries: Entry[] = [];
-			const blobData = new Map<string, Uint8Array>(); // hash → 原始字节（直传用，天然去重）
-
-			if (single) {
-				const d = new Uint8Array(await file.arrayBuffer());
-				const ext = fileExt(file.name);
-				progressTotal = 1;
-				progressN = 0;
-				const hash = await sha256Hex(d);
-				blobData.set(hash, d);
-				entries.push(await buildEntry(file.name, d, ext, hash));
-				progressN = 1;
-				addLog('info', `解析完成：1 个文件（${ext}，sha256 ${hash.slice(0, 12)}…）`);
-			} else {
-				const buf = new Uint8Array(await file.arrayBuffer());
-				const files = await readArchive(buf, loadUnrarWasm);
-
-				// 非音频扩展名跳过（目录条目已在 archive 层剔除；路径分隔符已归一为 /）
-				const audioFiles = files.filter((f) =>
-					['wav', 'ogg', 'mp3'].includes(f.path.split('.').pop()?.toLowerCase() ?? '')
-				);
-				skippedCount = files.length - audioFiles.length;
-				addLog('info', `解包完成：${audioFiles.length} 个音频 / 跳过 ${skippedCount} 个`);
-				if (audioFiles.length === 0) {
-					addLog('error', '压缩包内没有可收录的音频文件（wav / ogg / mp3）');
-					fail('bad_ext');
-					return;
-				}
-
-				progressTotal = audioFiles.length;
-				progressN = 0;
-				for (const f of audioFiles) {
-					const d = f.data;
-					const ext = f.path.split('.').pop()?.toLowerCase() ?? 'wav';
-					const hash = await sha256Hex(d);
-					if (!blobData.has(hash)) blobData.set(hash, d);
-					entries.push(await buildEntry(f.path, d, ext, hash));
-					progressN += 1;
-					// 每个文件让出一帧，长列表解析期间界面不冻结
-					await new Promise((r) => setTimeout(r, 0));
-				}
-			}
-
-			// 1. manifest（服务端强校验 + 秒传判定，返回缺失清单与预签名 URL；
-			//    附加模式由服务端建影子包，done 核验后合并进目标分组）
-			phase = 'uploading';
-			const mres = await fetch('/api/upload', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					...(appendTo ? { appendTo } : { name: groupName.trim() }),
-					entries
-				})
+			await runUpload({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) }, target, {
+				fetch: fetch.bind(window),
+				loadWasm: loadUnrarWasm,
+				decodeMeta
+			}, (e) => {
+				if (e.type === 'phase') phase = e.phase;
+				else if (e.type === 'progress') {
+					progressN = e.n;
+					progressTotal = e.total;
+				} else if (e.type === 'skipped') skippedCount = e.count;
+				else addLog(e.level, e.msg);
 			});
-			const mdata = (await mres.json().catch(() => ({}))) as {
-				packageId?: string;
-				missing?: Array<{ hash: string; url: string }>;
-				appending?: boolean;
-				existingCount?: number;
-				error?: string;
-			};
-			if (!mres.ok || !mdata.packageId) {
-				addLog('error', `POST /api/upload → ${mres.status}${mdata.error ? ` ${mdata.error}` : ''}`);
-				fail(mdata.error ?? 'manifest_failed');
-				return;
-			}
-			addLog(
-				'info',
-				`POST /api/upload → ${mres.status}（待直传 ${mdata.missing?.length ?? 0}，秒传 ${mdata.existingCount ?? 0}${mdata.appending ? '，附加模式' : ''}）`
-			);
-
-			// 2. 直传缺失 blob（同 hash 已有即秒传跳过）
-			progressTotal = mdata.missing?.length ?? 0;
-			progressN = 0;
-			for (const m of mdata.missing ?? []) {
-				const body = blobData.get(m.hash);
-				if (!body) {
-					addLog('error', `本地缺少 blob 数据：${m.hash.slice(0, 12)}…`);
-					fail('bad_hash');
-					return;
-				}
-				const pres = await fetch(m.url, { method: 'PUT', body });
-				if (!pres.ok) {
-					const detail = (await pres.text().catch(() => '')).slice(0, 200);
-					addLog('error', `PUT ${safeUrl(m.url)} → ${pres.status}${detail ? ` ${detail}` : ''}`);
-					fail('put_failed');
-					return;
-				}
-				progressN += 1;
-			}
-			if (progressTotal > 0) addLog('info', `音频直传完成：${progressTotal} 个`);
-
-			// 3. done 闭环核验（附加模式在此合并进目标分组）
-			phase = 'finalizing';
-			const dres = await fetch('/api/upload/done', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ packageId: mdata.packageId })
-			});
-			if (!dres.ok) {
-				const derr = ((await dres.json().catch(() => ({}))) as { error?: string }).error;
-				addLog('error', `POST /api/upload/done → ${dres.status}${derr ? ` ${derr}` : ''}`);
-				// 附加模式 404：合并批次可能已完成而响应丢失（影子包已删）——提示刷新确认
-				if (appendTo && derr === 'package_not_found') fail('append_gone');
-				else fail(derr ?? 'blob_mismatch');
-				return;
-			}
-			addLog('info', `POST /api/upload/done → ${dres.status}`);
 			phase = 'done';
 		} catch (err) {
-			// 解包错误按原因码提示（格式/加密/损坏），不再一律报网络错误
-			if (err instanceof ArchiveError) {
-				addLog('error', `解包失败[${err.code}]：${err.message}`);
-				fail(err.code);
-				return;
-			}
-			addLog('error', `异常中断：${err instanceof Error ? err.message : String(err)}`);
-			fail('network');
+			fail(err instanceof UploadError ? err.code : 'network');
 		}
 	}
 
@@ -398,10 +187,32 @@
 		const text = t(key);
 		return text === key ? t('upload.err.network') : text;
 	});
+
+	let cardEl = $state<HTMLElement | undefined>();
+	onMount(() => {
+		// 打开即聚焦首个控件（idle 阶段的拖放区 label）
+		cardEl?.querySelector<HTMLElement>('input, select, button, [tabindex]')?.focus();
+		// Esc 关闭；忙碌中不响应（防误触中断进行中上传）
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === 'Escape' && !busy) onclose();
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	});
+
+	// 进入 confirm 阶段时聚焦名称输入 / 附加下拉
+	$effect(() => {
+		if (phase === 'confirm') {
+			const el =
+				cardEl?.querySelector<HTMLElement>('#group-name') ??
+				cardEl?.querySelector<HTMLElement>('#append-target');
+			el?.focus();
+		}
+	});
 </script>
 
-<div class="mask" role="dialog" aria-modal="true" aria-label={t('upload.title')}>
-	<div class="card">
+<div class="dialog-mask" role="dialog" aria-modal="true" aria-label={t('upload.title')}>
+	<div class="dialog-card card" bind:this={cardEl}>
 		<h2>{t('upload.title')}</h2>
 
 		{#if phase === 'idle'}
@@ -548,31 +359,15 @@
 		{/if}
 
 		{#if !busy}
-			<button class="close" aria-label={t('upload.close')} onclick={onclose}>×</button>
+			<button class="dialog-close" aria-label={t('upload.close')} onclick={onclose}>×</button>
 		{/if}
 	</div>
 </div>
 
 <style>
-	.mask {
-		position: fixed;
-		inset: 0;
-		z-index: 100;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: rgb(9 12 9 / 0.62);
-		backdrop-filter: blur(4px);
-	}
-
+	/* 对话框骨架与按钮基元在 app.css（.dialog-* / .btn）；只留本组件差异化样式 */
 	.card {
-		position: relative;
 		width: min(480px, calc(100vw - 40px));
-		background: var(--bg-l2);
-		border: 1px solid color-mix(in srgb, var(--bg-l3) 55%, transparent);
-		border-radius: var(--radius-lg);
-		padding: 22px 24px;
-		box-shadow: 0 12px 40px rgb(0 0 0 / 0.45);
 	}
 
 	h2 {
@@ -675,30 +470,9 @@
 		margin-top: 14px;
 	}
 
-	.btn {
+	/* 对话框内按钮统一大号尺寸 */
+	.row .btn {
 		padding: 6px 16px;
-		border: 1px solid transparent;
-		border-radius: var(--radius);
-		background: transparent;
-		color: var(--text-dim);
-		font-size: 13px;
-		cursor: pointer;
-		transition:
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-	.btn:hover {
-		background: var(--bg-l3);
-		color: var(--text);
-	}
-	.btn.primary {
-		background: var(--accent);
-		color: var(--on-accent);
-		font-weight: 700;
-	}
-	.btn.primary:hover {
-		background: var(--accent-bright);
-		color: var(--on-accent);
 	}
 
 	/* confirm 阶段：待上传文件名（凹陷行）+ 分组名输入 */
@@ -778,20 +552,6 @@
 		outline: 2px solid var(--accent);
 	}
 
-	.btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-	.btn:disabled:hover {
-		background: transparent;
-		color: var(--text-dim);
-	}
-	.btn.primary:disabled,
-	.btn.primary:disabled:hover {
-		background: var(--accent);
-		color: var(--on-accent);
-	}
-
 	/* 失败详情日志：默认收缩（details），旁边复制按钮一键带走全文 */
 	.logwrap {
 		display: flex;
@@ -843,19 +603,5 @@
 	.logwrap .btn {
 		flex: none;
 		white-space: nowrap;
-	}
-
-	.close {
-		position: absolute;
-		top: 10px;
-		right: 12px;
-		border: none;
-		background: transparent;
-		color: var(--text-faint);
-		font-size: 20px;
-		cursor: pointer;
-	}
-	.close:hover {
-		color: var(--text);
 	}
 </style>

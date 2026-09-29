@@ -3,11 +3,12 @@
 	// 收起态 = 右下角悬浮钮（GitHub 反馈钮旁），展开态 = 右下角浮层面板；
 	// 文件表行可拖入格子（DND_FILE_MIME 自定义类型，拖起时面板自动展开）；
 	// 每格可叠多个文件、各自可选数字序号（'' = 无后缀）；「打包下载」按当前格子内容
-	// 实时拉 /f/<id> 全量（同 id 去重）→ fflate 流式 STORE 拼 zip → 保存（同整包下载策略）
+	// 实时拉 /f/<id> 全量（同 id 去重）→ fflate 流式 STORE 拼 zip → 保存（$lib/zip-save）
 	import { onMount } from 'svelte';
-	import { Zip, ZipDeflate } from 'fflate';
 	import { t } from '$lib/i18n';
 	import { DND_FILE_MIME, type KitDragData } from '$lib/api';
+	import { player } from '$lib/player.svelte';
+	import { saveZip } from '$lib/zip-save';
 
 	const ROWS = ['normal', 'soft', 'drum'] as const;
 	const COLS = ['hitnormal', 'hitwhistle', 'hitfinish', 'hitclap'] as const;
@@ -30,10 +31,11 @@
 	let dlDone = $state(0);
 	let dlTotal = $state(0);
 
-	// 预览播放：面板独立 Audio（与主播放器互不干扰）
-	let audio: HTMLAudioElement | null = null;
-	let playingUid = $state(-1);
-	let playingPaused = $state(false);
+	// 预览播放：与文件表共用同一 Audio（key 前缀 'kit:'——全局同一时刻只有一路播放）
+	const playingUid = $derived(
+		player.current?.startsWith('kit:') ? Number(player.current.slice(4)) : -1
+	);
+	const playingPaused = $derived(player.paused);
 
 	// 展平为打包清单：target = <行>-<列><序号>.<格式>
 	const entries = $derived.by(() => {
@@ -92,105 +94,49 @@
 	}
 
 	function removeItem(key: string, it: KitItem): void {
-		if (playingUid === it.uid) {
-			audio?.pause();
-			playingUid = -1;
-		}
+		// 只停自己的 key（文件表正在播放时不打扰）
+		if (player.current === `kit:${it.uid}`) player.stop();
 		cells[key] = (cells[key] ?? []).filter((x) => x.uid !== it.uid);
 	}
 
 	function clearAll(): void {
-		audio?.pause();
-		playingUid = -1;
+		if (playingUid !== -1) player.stop(); // 同上：仅当当前 key 属于本面板
 		cells = {};
 	}
 
 	/** 点 chip 播放钮：未播→播、播放中→暂停、暂停→继续（同文件表交互） */
 	function togglePlay(it: KitItem): void {
-		if (!audio) return;
-		if (playingUid === it.uid) {
-			if (audio.paused) void audio.play();
-			else audio.pause();
-			return;
-		}
-		playingUid = it.uid;
-		audio.src = `/f/${encodeURIComponent(it.id)}`;
-		void audio.play();
+		player.toggle(`kit:${it.uid}`, `/f/${encodeURIComponent(it.id)}`);
 	}
 
-	/** 打包下载：逐条拉取（同 id 去重）→ 流式 STORE 写入 → 落盘（复用整包下载的保存策略） */
+	/** 打包下载：并发拉取（同 id 去重）→ 流式 STORE 写入 → 落盘（同整包下载策略） */
 	async function downloadZip(): Promise<void> {
 		if (dlState === 'packing' || entries.length === 0) return;
 		dlState = 'packing';
 		dlDone = 0;
 		dlTotal = entries.length;
 		try {
-			let handle: FileSystemFileHandle | null = null;
-			try {
-				handle = await window.showSaveFilePicker({
-					suggestedName: `${t('kit.zipName')}.zip`,
-					types: [{ description: 'ZIP', accept: { 'application/zip': ['.zip'] } }]
-				});
-			} catch (e) {
-				if (e instanceof DOMException && e.name === 'AbortError') {
-					dlState = 'idle'; // 用户取消保存对话框，不算失败
-					return;
+			await saveZip(t('kit.zipName'), {
+				entries: entries.map((e) => ({ path: e.target, key: e.id })),
+				load: async (id) => {
+					// fetch 不带 Range → 200 全量
+					const r = await fetch(`/f/${encodeURIComponent(id)}`);
+					if (!r.ok) throw new Error(`HTTP ${r.status}`);
+					return new Uint8Array(await r.arrayBuffer());
+				},
+				concurrency: 6,
+				onProgress: (done, total) => {
+					dlDone = done;
+					dlTotal = total;
 				}
-				handle = null;
-			}
-			const writable = handle ? await handle.createWritable() : null;
-			const chunks: Uint8Array[] = [];
-			let writeChain = Promise.resolve();
-			const zip = new Zip((err, dat) => {
-				if (err) throw err;
-				if (writable) writeChain = writeChain.then(() => writable.write(dat));
-				else chunks.push(dat);
 			});
-			// 同一文件可能进多个格子：按 id 去重拉取（fetch 不带 Range → 200 全量）
-			const bufCache = new Map<string, Promise<Uint8Array>>();
-			const getBuf = (id: string): Promise<Uint8Array> => {
-				let p = bufCache.get(id);
-				if (!p) {
-					p = fetch(`/f/${encodeURIComponent(id)}`).then(async (r) => {
-						if (!r.ok) throw new Error(`HTTP ${r.status}`);
-						return new Uint8Array(await r.arrayBuffer());
-					});
-					bufCache.set(id, p);
-				}
-				return p;
-			};
-			for (const e of entries) {
-				const data = await getBuf(e.id);
-				const entry = new ZipDeflate(e.target, { level: 0 }); // STORE 直通，CPU 仅 crc32
-				zip.add(entry);
-				entry.push(data, true);
-				dlDone += 1;
-			}
-			zip.end(); // 同步流：返回时 central directory 已收入 chunks/写链
-			if (writable) {
-				await writeChain;
-				await writable.close();
-			} else {
-				const blob = new Blob(chunks as BlobPart[], { type: 'application/zip' });
-				const a = document.createElement('a');
-				a.href = URL.createObjectURL(blob);
-				a.download = `${t('kit.zipName')}.zip`;
-				a.click();
-				URL.revokeObjectURL(a.href);
-			}
-			dlState = 'idle';
+			dlState = 'idle'; // 'cancelled' 也不算失败
 		} catch {
 			dlState = 'error';
 		}
 	}
 
 	onMount(() => {
-		audio = new Audio();
-		audio.preload = 'metadata';
-		audio.addEventListener('play', () => (playingPaused = false));
-		audio.addEventListener('pause', () => (playingPaused = true));
-		audio.addEventListener('ended', () => (playingUid = -1));
-		audio.addEventListener('error', () => (playingUid = -1));
 		// 拖起文件表行时自动展开面板（types 在 dragstart 阶段已可读，getData 不行）。
 		// setTimeout 延迟到拖拽会话建立后再改 DOM：dragstart 事件内同步增删节点
 		// 会让 Chromium 直接放弃本次拖拽（表现为第一次拖没反应、第二次才好）
@@ -239,7 +185,11 @@
 					{t('kit.clear')}
 				</button>
 				{#if dlState === 'packing'}
-					<button class="btn primary" disabled>
+					<button
+						class="btn primary packing"
+						disabled
+						style:--pct={dlTotal > 0 ? (dlDone / dlTotal) * 100 : 0}
+					>
 						{t('download.packaging', { n: dlDone, total: dlTotal })}
 					</button>
 				{:else}
@@ -461,43 +411,10 @@
 		background: var(--bg-l3);
 	}
 
-	.btn {
+	/* 按钮基元在 app.css；面板动作区比正文按钮略小一号 */
+	.kit-actions .btn {
 		padding: 4px 14px;
-		border: 1px solid transparent;
-		border-radius: var(--radius);
-		background: transparent;
-		color: var(--text-dim);
 		font-size: 12px;
-		cursor: pointer;
-		white-space: nowrap;
-		transition:
-			background 0.15s ease,
-			color 0.15s ease;
-	}
-	.btn:hover {
-		background: var(--bg-l3);
-		color: var(--text);
-	}
-	.btn.primary {
-		background: var(--accent);
-		color: var(--on-accent);
-		font-weight: 700;
-	}
-	.btn.primary:hover {
-		background: var(--accent-bright);
-		color: var(--on-accent);
-	}
-	.btn:disabled {
-		opacity: 0.55;
-		cursor: default;
-	}
-	.btn.primary:disabled {
-		background: var(--accent);
-		color: var(--on-accent);
-	}
-	.btn.err {
-		background: var(--accent-pink);
-		color: var(--on-accent);
 	}
 
 	.kit-grid {

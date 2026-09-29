@@ -88,6 +88,8 @@
 	class="wave"
 	class:placeholder={!peaks}
 	onclick={(e) => {
+		// 点击必须止步于画布：冒泡到行会触发行的 onclick（togglePlay），刚跳播完又被暂停
+		e.stopPropagation();
 		const rect = canvas!.getBoundingClientRect();
 		onseek?.(Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)));
 	}}

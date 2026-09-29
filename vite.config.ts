@@ -1,5 +1,6 @@
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig } from 'vitest/config';
+import type { Plugin } from 'vite';
 
 /**
  * node-unrar-js 的 emscripten 运行时有两处依赖 new Function 动态求值（createNamedFunction
@@ -47,5 +48,9 @@ export default defineConfig({
 	plugins: [sveltekit(), unrarCspFix()],
 	// 该依赖不能进 dev 预打包：esbuild 预打包管线不执行 vite 插件 transform，
 	// 上面的 CSP 替换会失效；排除后走 dev server 模块管线，dev / build 行为一致
-	optimizeDeps: { exclude: ['node-unrar-js'] }
+	optimizeDeps: { exclude: ['node-unrar-js'] },
+	test: {
+		include: ['src/**/*.test.ts'],
+		environment: 'node'
+	}
 });

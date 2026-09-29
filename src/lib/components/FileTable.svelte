@@ -88,7 +88,10 @@
 						}}
 						onclick={() => onplay?.(f)}
 						onkeydown={(e) => {
-							if (e.key === 'Enter' || e.key === ' ') onplay?.(f);
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault(); // Space 默认滚动页面，需拦下
+								onplay?.(f);
+							}
 						}}
 						role="button"
 						tabindex="0"

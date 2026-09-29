@@ -4,15 +4,16 @@
 // appendTo 模式：建 append_to 指向目标包的影子 pending 包，done 核验后合并进目标包
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import type { D1PreparedStatement } from '@cloudflare/workers-types';
 import { getEnv, blobKey } from '$lib/server/media';
-import { getSecrets, type Secrets } from '$lib/server/env';
-import { verifySession, SESSION_COOKIE } from '$lib/server/session';
+import { getSecrets, uploadCapable } from '$lib/server/env';
+import { requireUser } from '$lib/server/guard';
 import { lazyCleanupPending } from '$lib/server/packages';
+import { reserveBlobStatements, committedHashes } from '$lib/server/ledger';
 import {
 	GLOBAL_CAP_BYTES,
 	MAX_AUDIO_BYTES,
 	MAX_ENTRIES,
-	MIME_BY_EXT,
 	PKGS_PER_DAY,
 	presignPut,
 	validateManifest
@@ -26,20 +27,17 @@ function splitPath(path: string): { folderPath: string; name: string } {
 		: { folderPath: path.slice(0, slash), name: path.slice(slash + 1) };
 }
 
-function needUploadSecrets(s: Partial<Secrets>): s is Secrets {
-	return Boolean(s.OSU_CLIENT_ID && s.OSU_CLIENT_SECRET && s.SESSION_SECRET && s.R2_ACCOUNT_ID && s.R2_ACCESS_KEY_ID && s.R2_SECRET_ACCESS_KEY);
-}
-
 export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 	const env = getEnv(platform);
 	const secrets = getSecrets(platform);
-	if (!env || !needUploadSecrets(secrets)) {
+	if (!env || !uploadCapable(secrets)) {
 		return json({ error: 'service_unavailable' }, { status: 503 });
 	}
 
 	// 登录态（上传必须登录）
-	const session = await verifySession(cookies.get(SESSION_COOKIE), secrets.SESSION_SECRET);
-	if (!session) return json({ error: 'not_logged_in' }, { status: 401 });
+	const g = await requireUser(platform, cookies);
+	if (g instanceof Response) return g;
+	const session = g.session;
 
 	// manifest 强校验
 	const validated = validateManifest(await request.json().catch(() => null));
@@ -135,14 +133,7 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 	// D1 batch 是事务性的，混合语句一并分批（免费计划单请求 50 子请求上限：
 	// 5000 条目 ×2 类插入按 250/批 ≈ 40 子请求，预算内）
 	const byHash = new Map(m.entries.map((e) => [e.hash, e]));
-	const stmts: D1PreparedStatement[] = [];
-	for (const [hash, entry] of byHash) {
-		stmts.push(
-			env.DB.prepare(
-				'INSERT OR IGNORE INTO blobs (hash, size, mime, refcount) VALUES (?1, ?2, ?3, 0)'
-			).bind(hash, entry.size, MIME_BY_EXT[entry.ext])
-		);
-	}
+	const stmts: D1PreparedStatement[] = [...reserveBlobStatements(env.DB, m.entries)];
 	for (const e of m.entries) {
 		const { folderPath, name } = splitPath(e.path);
 		stmts.push(
@@ -171,31 +162,20 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 	}
 
 	// 秒传判定：refcount > 0 的 hash 说明 R2 已有 done 核验过的真实对象，直接复用；
-	// 刚插入的 refcount=0 行（或历史孤儿）不算，仍需直传。
-	// 分片 IN 查询合成 batch（每次 1 子请求），结果集在批响应里逐条读取
-	const existing = new Set<string>();
+	// 刚插入的 refcount=0 行（或历史孤儿）不算，仍需直传
 	const hashList = [...byHash.keys()];
-	const selectStmts: D1PreparedStatement[] = [];
-	for (let i = 0; i < hashList.length; i += 100) {
-		const chunk = hashList.slice(i, i + 100);
-		selectStmts.push(
-			env.DB.prepare(
-				`SELECT hash FROM blobs WHERE hash IN (${chunk.map((_, j) => `?${j + 1}`).join(', ')}) AND refcount > 0`
-			).bind(...chunk)
-		);
-	}
-	for (let i = 0; i < selectStmts.length; i += 250) {
-		const res = await env.DB.batch(selectStmts.slice(i, i + 250));
-		for (const r of res) {
-			for (const row of ((r.results ?? []) as Array<{ hash: string }>)) existing.add(row.hash);
-		}
-	}
+	const existing = await committedHashes(env.DB, hashList);
 
-	const missing: Array<{ hash: string; ext: string; url: string }> = [];
-	for (const [hash, entry] of byHash) {
-		if (existing.has(hash)) continue;
-		missing.push({ hash, ext: entry.ext, url: await presignPut(secrets, blobKey(hash, entry.ext)) });
-	}
+	// 预签名是纯本地计算（不出网）：并发签出全部缺失 blob 的 PUT URL
+	const missing = await Promise.all(
+		[...byHash]
+			.filter(([hash]) => !existing.has(hash))
+			.map(async ([hash, entry]) => ({
+				hash,
+				ext: entry.ext as string,
+				url: await presignPut(secrets, blobKey(hash, entry.ext))
+			}))
+	);
 
 	return json({
 		packageId,

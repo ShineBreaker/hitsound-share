@@ -78,7 +78,7 @@
 		<input
 			class="edit"
 			class:failed
-			value={editValue}
+			bind:value={editValue}
 			disabled={submitting}
 			maxlength="100"
 			title={failed ? t('rename.failed') : undefined}
