@@ -47,7 +47,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 3. 内容寻址存储：R2 key = `blobs/<hash前2>/<sha256>.<ext>`（统一经 `blobKey()` 组装），`blobs.refcount` 管生命周期——done 用全表绝对对齐（= 全库 visible 包引用数），删除/清理按涉及 hash 对齐，归零才能删 R2 对象。**整包下载 = 浏览器按当前 files 实时拼 zip**（清单端点 + 预签名 GET 直连/`/api/blob` 代理回退），**original.zip 已停传停存**。附加上传走「影子 pending 包」：`packages.append_to` 指向目标包，done 核验后事务性合并；仅限自己的 visible 包
 4. 文件/文件夹名含 `#`、空格、`&`、逗号是常态：渲染必须转义，URL 必须用 URLSearchParams/encodeURIComponent；folder_path 匹配走全值精确比较（不用 LIKE）
 5. 上传链路优雅降级：7 个环境变量（OSU_CLIENT_ID / OSU_CLIENT_SECRET / SESSION_SECRET / ADMIN_OSU_ID / R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY）任一缺失 → `/api/config` 返回 `uploadEnabled=false` → 前端隐藏登录/上传入口，浏览/试听/下载不受影响（下载清单端点只依赖 bindings + 可选预签名回退）；改上传链路时保持该行为
-6. UI 手写 CSS 变量（osu!lazer Argon：主紫 #8c66ff、点缀粉 #ff66aa、背景 #1b171c/#28222a/#362e38、圆角 5px），不引入 UI 组件库；字体 Exo 2 自托管，勿依赖外链 CDN
+6. UI 手写 CSS 变量（osu!editor 橄榄绿：主薄荷 #3fd8a0、点缀粉 #ff7e96、页面橄榄灰 #31362f / 面板炭绿 #1e231e、圆角 6px/12px），token 与组件模式一律以 `DESIGN.md` 为准；不引入 UI 组件库，字体 Comfortaa 自托管（Torus 为商业字体、禁止第三方分发，勿引入真文件），勿依赖外链 CDN
 
 ## Git 纪律
 
@@ -70,7 +70,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 - 上传/附加/合并/删除/配额/去重方案：`docs/tech-proposal.md`（设计期快照，实现以代码为准）
 - 需求口径与决策记录：`docs/requirements-consensus.md`（设计期快照，P10-P13 为 v4 增补）
-- 表结构变更：`schema.sql`；CSP 与适配器：`svelte.config.js`；子请求预算与核验取舍：`src/routes/api/upload/done/+server.ts` 头注
+- 视觉与组件规范：`DESIGN.md`；表结构变更：`schema.sql`；CSP 与适配器：`svelte.config.js`；子请求预算与核验取舍：`src/routes/api/upload/done/+server.ts` 头注
 
 ## 技能索引
 

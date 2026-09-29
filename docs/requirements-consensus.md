@@ -65,7 +65,7 @@
 - **⚠️ R2 激活需绑卡**：开通 R2 必须绑定支付方式（社区有 2026-03 被预扣 $5 的报告）。"$0 起步"实际含义 = 需绑卡、免费额度内不产生费用。
 - **⚠️ r2.dev 公开子域官方明文"限流、仅限开发"** → 架构决定：音频不走 r2.dev 公开桶，走 Pages Functions 从 R2 绑定代理读取（同在免费额度内，支持 Range 分段播放）。
 - **osu! OAuth v2**：客户端在 osu.ppy.sh/home/account/edit#oauth 注册；授权码模式；登录只需 `identify` scope；`GET /api/v2/me`（Bearer）返回 id/username/avatar_url；回调 URL 必须与注册值完全一致；localhost 可用于调试。
-- **Argon 视觉规格（lazer 源码提取）**：紫阶 #b299ff/#8c66ff/#7047eb/#5933cc/#3d2e6b（主强调 #8c66ff，经典 osu! 紫 #8866ee），品牌粉 #ff66aa；暗背景族 #1b171c/#28222a/#362e38；圆角 5px；字体 Torus（**付费字体，web 端用开源替代**，候选 Exo 2 / Inter）。
+- **Argon 视觉规格（lazer 源码提取，已被 osu!editor 橄榄绿主题取代——现行规范见 `DESIGN.md`，西文字体改用 Comfortaa）**：紫阶 #b299ff/#8c66ff/#7047eb/#5933cc/#3d2e6b（主强调 #8c66ff，经典 osu! 紫 #8866ee），品牌粉 #ff66aa；暗背景族 #1b171c/#28222a/#362e38；圆角 5px；字体 Torus（**付费字体，web 端用开源替代**，候选 Exo 2 / Inter）。
 
 ## 用户侧待办
 

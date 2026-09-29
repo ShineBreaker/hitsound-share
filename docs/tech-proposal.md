@@ -88,6 +88,8 @@
 
 CSS 变量 `--accent:#8c66ff`、`--accent-pink:#ff66aa`、`--bg-l1:#1b171c/l2:#28222a/l3:#362e38`；圆角 5px 基准；Exo 2 替代 Torus；波形 canvas 紫色渐变。
 
+> ⚠️ 已被 osu!editor 橄榄绿主题取代，现行视觉规范以 `DESIGN.md` 为准（薄荷 #3fd8a0 / 炭绿面板；西文字体改用 Comfortaa——Torus 为 Paulo Goode 商业字体、授权禁止第三方分发）。
+
 ## 安全基线
 
 白名单+配额+水位；路径仅 D1 字符串；Svelte 默认转义；服务端出网仅 osu.ppy.sh；CSP default-src 'self'。
