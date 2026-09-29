@@ -26,8 +26,8 @@
 		onsubmit
 	}: Props = $props();
 
-	// 文件夹默认展开；点箭头折叠
-	let open = $state(true);
+	// 默认收缩到最小（只显示顶层包名），由用户点箭头/名字逐级展开
+	let open = $state(false);
 	const hasChildren = $derived(node.children.length > 0);
 	const editing = $derived(editingKey === node.key);
 	const canEdit = $derived(
@@ -97,7 +97,11 @@
 			class="label"
 			class:pkg={node.isPackage}
 			class:active={selected === node.key}
-			onclick={() => onselect?.(node.key)}
+			onclick={() => {
+				// 名字是更大的点击目标：点收起中的节点顺带展开；收起只走箭头，避免反复横跳
+				if (hasChildren && !open) open = true;
+				onselect?.(node.key);
+			}}
 		>
 			{node.name}
 		</button>
@@ -134,8 +138,8 @@
 
 	.caret {
 		flex: none;
-		width: 18px;
-		height: 18px;
+		width: 22px;
+		height: 22px;
 		padding: 0;
 		display: inline-flex;
 		align-items: center;
@@ -143,7 +147,7 @@
 		border: none;
 		background: transparent;
 		color: var(--text-faint);
-		font-size: 10px;
+		font-size: 12px;
 		cursor: pointer;
 		border-radius: var(--radius);
 		transition: transform 0.15s ease;
@@ -166,13 +170,16 @@
 		border: none;
 		background: transparent;
 		color: var(--text-dim);
-		font-size: 13px;
-		padding: 3px 8px;
+		font-size: 14px;
+		padding: 5px 10px;
 		border-radius: var(--radius);
 		cursor: pointer;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease;
 	}
 	.label:hover {
 		background: var(--bg-l3);
@@ -196,13 +203,13 @@
 		flex: 1;
 		min-width: 0;
 		box-sizing: border-box;
-		padding: 2px 6px;
+		padding: 4px 8px;
 		border: 1px solid var(--accent);
 		border-radius: var(--radius);
 		background: var(--bg-l1);
 		color: var(--text);
 		font-family: inherit;
-		font-size: 13px;
+		font-size: 14px;
 	}
 	.edit:focus {
 		outline: none;
@@ -218,8 +225,8 @@
 	/* ✎ 按钮：默认隐藏，行 hover 或自身 focus 时浮现 */
 	.rename {
 		flex: none;
-		width: 20px;
-		height: 20px;
+		width: 22px;
+		height: 22px;
 		padding: 0;
 		display: none;
 		align-items: center;
