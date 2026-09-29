@@ -10,3 +10,12 @@ Thumbs.db
 
 .agents/workfile/
 .mimosa
+.wrangler/
+.svelte-kit/
+
+# 密钥
+.env
+.env.*
+!.env.example
+node_modules/
+

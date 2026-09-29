@@ -1,0 +1,17 @@
+# Cloudflare Pages 配置（adapter-cloudflare 构建产物目录）
+name = "hitsound-share"
+compatibility_date = "2026-09-29"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = ".svelte-kit/cloudflare"
+
+# R2：音频 blob（blobs/<hash前2>/<sha256>.<ext>）与整包 zip（packages/<pid>/original.zip）
+# 音频流由 Pages Functions 从此绑定代理读取，支持 Range
+[[r2_buckets]]
+binding = "HITSOUND_FILES"
+bucket_name = "hitsound-files"
+
+# D1：users / packages / files / blobs（内容寻址账本），见 schema.sql
+[[d1_databases]]
+binding = "DB"
+database_name = "hitsound-share-db"
+database_id = "1321deab-339a-43ca-85c4-59291542177b"

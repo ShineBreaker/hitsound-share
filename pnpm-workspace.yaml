@@ -1,0 +1,6 @@
+# pnpm 依赖构建脚本放行清单（pnpm 默认拦截依赖的 postinstall）
+# esbuild：vite 构建核心，放行其二进制安装脚本
+# workerd：仅 wrangler 本地模拟需要，暂不放行（本地 dev 走 SvelteKit 内置平台模拟）
+allowBuilds:
+  esbuild: true
+  workerd: false

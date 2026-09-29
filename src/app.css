@@ -1,0 +1,79 @@
+/*
+ * 全局样式：osu!lazer Argon 主题
+ * 颜色与圆角规格取自技术方案「Argon 主题落地」：
+ * 主紫 #8c66ff、点缀粉 #ff66aa、暗背景三层 #1b171c/#28222a/#362e38、圆角 5px
+ */
+:root {
+	/* 紫阶（lazer 源码提取） */
+	--accent: #8c66ff; /* 主强调 */
+	--accent-bright: #b299ff; /* 亮紫：渐变起点 / 高亮 */
+	--accent-deep: #7047eb; /* 深紫：按下 / 滚动条悬停 */
+	--accent-pink: #ff66aa; /* 品牌粉点缀 */
+
+	/* 暗背景三层 */
+	--bg-l1: #1b171c; /* 页面底 */
+	--bg-l2: #28222a; /* 面板 */
+	--bg-l3: #362e38; /* hover / 浮层 */
+
+	/* 文字 */
+	--text: #ffffff;
+	--text-dim: #a89fae;
+	--text-faint: #7a7083;
+
+	/* 形状 */
+	--radius: 5px;
+
+	/* 字体：Exo 2 自托管 woff2（@fontsource，构建期打包，无外链 CDN），中文回退系统栈 */
+	--font-ui:
+		'Exo 2',
+		'PingFang SC',
+		'Hiragino Sans GB',
+		'Microsoft YaHei',
+		'Noto Sans CJK SC',
+		sans-serif;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	padding: 0;
+	height: 100%;
+}
+
+body {
+	background: var(--bg-l1);
+	color: var(--text);
+	font-family: var(--font-ui);
+	font-size: 14px;
+	line-height: 1.5;
+	-webkit-font-smoothing: antialiased;
+}
+
+/* 数字列（时长/采样率等）等宽显示，表格纵向对齐 */
+.tnum {
+	font-variant-numeric: tabular-nums;
+}
+
+/* 暗色滚动条 */
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-thumb {
+	background: var(--bg-l3);
+	border-radius: var(--radius);
+}
+::-webkit-scrollbar-thumb:hover {
+	background: var(--accent-deep);
+}
+
+button {
+	font-family: inherit;
+}
