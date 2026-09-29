@@ -142,3 +142,12 @@ export function parseNodeKey(key: string): { pkg: string; folder: string } {
 		? { pkg: rest, folder: '' }
 		: { pkg: rest.slice(0, slash), folder: rest.slice(slash + 1) };
 }
+
+/** 文件表行 → 组装面板格子的拖拽数据类型（dataTransfer 自定义 MIME，只接受本站行内拖出的数据） */
+export const DND_FILE_MIME = 'application/x-hitsound-file';
+
+export interface KitDragData {
+	id: string; // files.id
+	name: string;
+	format: string;
+}

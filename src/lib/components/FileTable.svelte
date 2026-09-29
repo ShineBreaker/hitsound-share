@@ -4,7 +4,7 @@
 	// URL 一律 encodeURIComponent（id 为 uuid，防御性编码）
 	import type { FileRow } from '$lib/types';
 	import { t } from '$lib/i18n';
-	import { fetchPeaks } from '$lib/api';
+	import { fetchPeaks, DND_FILE_MIME, type KitDragData } from '$lib/api';
 	import WaveformCanvas from './WaveformCanvas.svelte';
 
 	interface Props {
@@ -79,6 +79,13 @@
 				{#each files as f (f.id)}
 					<tr
 						class:playing={f.id === playingId}
+						draggable="true"
+						ondragstart={(e) => {
+							// 供底部组装面板接收：自定义 MIME，drop 侧按 types 判断来源
+							const data: KitDragData = { id: f.id, name: f.name, format: f.format };
+							e.dataTransfer?.setData(DND_FILE_MIME, JSON.stringify(data));
+							if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy';
+						}}
 						onclick={() => onplay?.(f)}
 						onkeydown={(e) => {
 							if (e.key === 'Enter' || e.key === ' ') onplay?.(f);

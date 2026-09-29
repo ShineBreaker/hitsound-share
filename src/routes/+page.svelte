@@ -8,6 +8,7 @@
 	import { Zip, ZipDeflate } from 'fflate';
 	import TreeView from '$lib/components/TreeView.svelte';
 	import FileTable from '$lib/components/FileTable.svelte';
+	import KitBuilder from '$lib/components/KitBuilder.svelte';
 	import {
 		fetchTree,
 		fetchFiles,
@@ -394,6 +395,9 @@
 			</div>
 		{/if}
 	</section>
+
+	<!-- 悬浮组装面板（position:fixed，不占文档流）：拖文件表行到格子，按 <行>-<列><序号> 打包 zip -->
+	<KitBuilder />
 </div>
 
 <style>

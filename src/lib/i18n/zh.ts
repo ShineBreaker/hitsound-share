@@ -44,6 +44,18 @@ const zh = {
 	'download.failedRetry': '下载失败，重试',
 	'download.failedHint': '打包中断（网络错误等），点击重新打包',
 
+	// 音效组装器（主页底部面板：拖文件表行到格子 → 按 <行>-<列><序号> 打包）
+	'kit.title': '自定义音效组',
+	'kit.hint': '从文件表拖拽音效到格子，同格可叠多个并各自加序号',
+	'kit.count': '{count} 个音效',
+	'kit.download': '打包下载',
+	'kit.clear': '清空',
+	'kit.suffix': '序号（可选）：填 2 → drum-hitnormal2.wav，留空 → drum-hitnormal.wav',
+	'kit.remove': '移除',
+	'kit.collapse': '收起',
+	'kit.zipName': 'custom-hitsounds',
+	'kit.dupName': '重名，解压时会互相覆盖，请调整序号',
+
 	// 错误
 	'error.load': '加载失败',
 

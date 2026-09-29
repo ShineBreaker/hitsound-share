@@ -35,7 +35,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 - `src/lib/server/` — 仅服务端代码：`osu.ts`（唯一出网通道）、`session.ts`（HMAC 签名 cookie）、`media.ts`（R2 key/Range/流式代理）、`upload.ts`（manifest 校验/配额/预签名 PUT+GET/魔数核验）、`env.ts`（密钥读取）、`packages.ts`（包治理：权限守卫/删除/refcount 对齐/懒清理）
 - `src/routes/api/**` — 全部 API 端点（编译为 Pages Functions）：`upload`（manifest+影子包）、`upload/done`（核验+合并）、`package/[id]`（PATCH 改名 / DELETE）、`package/[id]/folder`（小类改名）、`package/[id]/zip`（整包下载清单）、`blob/[hash]/[ext]`（下载回退代理）、`admin/purge-zips`、`tree`/`files`/`waveform`/`my`/`auth`/`config`
 - `src/routes/+page.ts` prerender 首页 shell 省 Functions 配额；整包下载在 `+page.svelte` 浏览器端实时拼 zip（fflate 流式 STORE）
-- `src/lib/components/` — TreeView（含行内改名）/ FileTable / WaveformCanvas / UploadDialog（新建/附加模式）/ MyPackages
+- `src/lib/components/` — TreeView（含行内改名）/ FileTable（行可拖入组装面板）/ WaveformCanvas / UploadDialog（新建/附加模式）/ MyPackages / KitBuilder（右下角悬浮组装面板：格子拖放 → `行-列[序号]` 命名打包 zip；自动展开必须经 setTimeout 延迟——dragstart 内同步改 DOM 会被 Chromium 取消拖拽）
 - `src/lib/i18n/` — 文案集中在 `zh.ts` + `t()`（预留 en），不要在组件里写死中文
 - `schema.sql` — D1 表结构（v4：packages.append_to 影子包）；`wrangler.toml` — Pages 构建配置 + R2/D1 bindings；`svelte.config.js` — CSP
 - 环境三件套：`.envrc`（direnv 入口）、`manifest.scm`（guix 依赖）、`pnpm-workspace.yaml`（pnpm 设置）
