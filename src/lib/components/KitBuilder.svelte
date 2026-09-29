@@ -352,14 +352,15 @@
 		align-items: center;
 		justify-content: center;
 		border-radius: 50%;
-		border: 1px solid var(--accent-deep);
+		border: none;
 		background: var(--accent);
-		color: var(--text);
+		color: var(--on-accent);
 		cursor: pointer;
 		box-shadow: 0 4px 16px rgb(0 0 0 / 0.35);
+		transition: background 0.15s ease;
 	}
 	.kit-fab:hover {
-		background: var(--accent-deep);
+		background: var(--accent-bright);
 	}
 	.kit-fab svg {
 		width: 18px;
@@ -377,7 +378,7 @@
 		border-radius: 999px;
 		background: var(--accent-pink);
 		border: 2px solid var(--bg-l1);
-		color: #fff;
+		color: var(--on-accent);
 		font-size: 10px;
 		font-weight: 700;
 		display: flex;
@@ -396,8 +397,8 @@
 		display: flex;
 		flex-direction: column;
 		background: var(--bg-l2);
-		border: 1px solid var(--bg-l3);
-		border-radius: var(--radius);
+		border: 1px solid color-mix(in srgb, var(--bg-l3) 55%, transparent);
+		border-radius: var(--radius-lg);
 		box-shadow: 0 12px 40px rgb(0 0 0 / 0.45);
 		overflow: hidden;
 	}
@@ -407,9 +408,9 @@
 		display: flex;
 		align-items: center;
 		gap: 10px;
-		padding: 4px 10px;
-		min-height: 40px;
-		border-bottom: 1px solid var(--bg-l3);
+		padding: 4px 12px;
+		min-height: 42px;
+		border-bottom: 1px solid color-mix(in srgb, var(--bg-l3) 55%, transparent);
 	}
 
 	.kit-name {
@@ -462,36 +463,41 @@
 
 	.btn {
 		padding: 4px 14px;
-		border: 1px solid var(--bg-l3);
+		border: 1px solid transparent;
 		border-radius: var(--radius);
 		background: transparent;
 		color: var(--text-dim);
 		font-size: 12px;
 		cursor: pointer;
 		white-space: nowrap;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease;
 	}
 	.btn:hover {
 		background: var(--bg-l3);
 		color: var(--text);
 	}
 	.btn.primary {
-		border-color: var(--accent);
 		background: var(--accent);
-		color: var(--text);
-		font-weight: 600;
+		color: var(--on-accent);
+		font-weight: 700;
 	}
 	.btn.primary:hover {
-		background: var(--accent-deep);
-		border-color: var(--accent-deep);
+		background: var(--accent-bright);
+		color: var(--on-accent);
 	}
 	.btn:disabled {
 		opacity: 0.55;
 		cursor: default;
 	}
+	.btn.primary:disabled {
+		background: var(--accent);
+		color: var(--on-accent);
+	}
 	.btn.err {
-		border-color: var(--accent-pink);
 		background: var(--accent-pink);
-		color: var(--text);
+		color: var(--on-accent);
 	}
 
 	.kit-grid {
@@ -507,7 +513,7 @@
 
 	.colhead {
 		text-align: center;
-		color: var(--accent-bright);
+		color: var(--text-dim);
 		font-size: 12px;
 		font-weight: 600;
 		padding-bottom: 2px;
@@ -521,20 +527,24 @@
 		font-size: 13px;
 	}
 
+	/* 格子：编辑器音效格同款浮起方格 + 居中 + */
 	.cell {
 		min-width: 0;
-		background: var(--bg-l1);
-		border: 1px dashed var(--bg-l3);
-		border-radius: var(--radius);
+		background: var(--bg-l3);
+		border: 1px solid transparent;
+		border-radius: 8px;
 		padding: 4px;
 		display: flex;
 		flex-direction: column;
 		gap: 3px;
 		overflow-y: auto;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease;
 	}
 	.cell.over {
 		border-color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 12%, var(--bg-l1));
+		background: color-mix(in srgb, var(--accent) 12%, var(--bg-l3));
 	}
 
 	.plus {
@@ -555,7 +565,7 @@
 		min-width: 0;
 		padding: 2px 4px;
 		border-radius: var(--radius);
-		background: var(--bg-l3);
+		background: var(--bg-l2);
 		font-size: 12px;
 	}
 	.chip.dup {
@@ -581,7 +591,7 @@
 		padding: 0;
 	}
 	.play:hover {
-		background: var(--bg-l1);
+		background: var(--bg-l3);
 	}
 
 	.cname {
@@ -597,9 +607,9 @@
 		flex: none;
 		width: 26px;
 		padding: 1px 3px;
-		border: 1px solid var(--bg-l1);
+		border: 1px solid transparent;
 		border-radius: var(--radius);
-		background: var(--bg-l1);
+		background: var(--bg-inset);
 		color: var(--accent-bright);
 		font-size: 11px;
 		text-align: center;
@@ -625,7 +635,7 @@
 	}
 	.rm:hover {
 		color: var(--accent-pink);
-		background: var(--bg-l1);
+		background: var(--bg-l3);
 	}
 
 	/* 播放指示：三根跳动条（FileTable 同款缩小版） */

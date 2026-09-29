@@ -67,6 +67,7 @@ const zh = {
 	// 上传对话框
 	'upload.title': '上传音效',
 	'upload.pick': '选择 zip 或音频文件',
+	'upload.drop': '把文件拖到此处，或点击选择',
 	'upload.hint': '支持 zip / rar 整包或单个 wav / ogg / mp3 文件，压缩包内非音频文件会被跳过（音频累计 ≤1GB）',
 	'upload.groupName': '分组名称',
 	'upload.start': '开始上传',

@@ -153,8 +153,10 @@
 		top: 0;
 		z-index: 1;
 		background: var(--bg-l2);
-		color: var(--accent-bright);
+		color: var(--text-faint);
+		font-size: 11px;
 		font-weight: 600;
+		letter-spacing: 0.08em;
 		text-align: left;
 		padding: 8px 10px;
 		border-bottom: 1px solid var(--bg-l3);
@@ -163,9 +165,10 @@
 
 	td {
 		padding: 5px 10px;
-		border-bottom: 1px solid color-mix(in srgb, var(--bg-l3) 45%, transparent);
+		border-bottom: 1px solid color-mix(in srgb, var(--bg-l3) 40%, transparent);
 		color: var(--text-dim);
 		vertical-align: middle;
+		transition: background 0.12s ease;
 	}
 
 	tbody tr {
@@ -176,10 +179,13 @@
 		color: var(--text);
 	}
 
-	/* 播放行高亮 */
+	/* 播放行：薄荷淡底 + 左侧 3px 内嵌薄荷条（编辑器选中行同款） */
 	tbody tr.playing td {
-		background: color-mix(in srgb, var(--accent) 16%, transparent);
+		background: color-mix(in srgb, var(--accent) 14%, transparent);
 		color: var(--text);
+	}
+	tbody tr.playing td:first-child {
+		box-shadow: inset 3px 0 0 var(--accent);
 	}
 
 	.col-name {
@@ -212,11 +218,15 @@
 		display: inline-block;
 		padding: 1px 7px;
 		border-radius: var(--radius);
-		background: color-mix(in srgb, var(--accent) 22%, transparent);
-		color: var(--accent-bright);
+		background: var(--bg-l3);
+		color: var(--text-dim);
 		font-size: 11px;
 		font-weight: 600;
 		letter-spacing: 0.5px;
+	}
+	tr.playing .fmt {
+		background: color-mix(in srgb, var(--accent) 25%, transparent);
+		color: var(--accent-bright);
 	}
 
 	/* 播放指示条：等高动画，暂停时静止并降为半透明 */

@@ -119,10 +119,10 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 0 16px;
-		height: 52px;
+		padding: 0 18px;
+		height: 54px;
 		background: var(--bg-l2);
-		border-bottom: 1px solid var(--bg-l3);
+		border-bottom: 1px solid color-mix(in srgb, var(--bg-l3) 70%, transparent);
 	}
 
 	.brand {
@@ -132,7 +132,7 @@
 		min-width: 0;
 	}
 
-	/* 品牌标记：紫色圆环 + 粉色圆点（favicon 同款） */
+	/* 品牌标记：薄荷圆环 + 粉色圆点（favicon 同款） */
 	.logo {
 		align-self: center;
 		width: 22px;
@@ -167,7 +167,7 @@
 
 	.btn {
 		padding: 6px 16px;
-		border: 1px solid var(--bg-l3);
+		border: 1px solid transparent;
 		border-radius: var(--radius);
 		background: transparent;
 		color: var(--text-dim);
@@ -175,21 +175,24 @@
 		cursor: pointer;
 		text-decoration: none;
 		display: inline-block;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease;
 	}
 	.btn:hover {
 		background: var(--bg-l3);
 		color: var(--text);
 	}
 
+	/* 主按钮：编辑器同款薄荷填充 + 深色文字 */
 	.btn.primary {
-		border-color: var(--accent);
 		background: var(--accent);
-		color: var(--text);
-		font-weight: 600;
+		color: var(--on-accent);
+		font-weight: 700;
 	}
 	.btn.primary:hover {
-		background: var(--accent-deep);
-		border-color: var(--accent-deep);
+		background: var(--accent-bright);
+		color: var(--on-accent);
 	}
 
 	/* 已登录用户名按钮（打开我的上传） */
@@ -246,7 +249,7 @@
 		box-shadow: 0 4px 16px rgb(0 0 0 / 0.35);
 	}
 	.gh-fab:hover {
-		color: var(--text);
+		color: var(--accent-bright);
 		border-color: var(--accent);
 	}
 	.gh-fab svg {

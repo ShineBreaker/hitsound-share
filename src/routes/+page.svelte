@@ -313,7 +313,7 @@
 
 <div class="browser">
 	<aside class="tree-panel">
-		<div class="panel-title">{t('tree.title')}</div>
+		<div class="panel-title"><span>{t('tree.title')}</span></div>
 		<nav class="tree">
 			{#if treeLoading}
 				<div class="hint">{t('table.loading')}</div>
@@ -351,12 +351,12 @@
 			</nav>
 			{#if currentPkgId && packages.length > 0}
 				{#if dlState === 'packing'}
-					<button class="btn" disabled>
+					<button class="btn primary" disabled>
 						{t('download.packaging', { n: dlDone, total: dlTotal })}
 					</button>
 				{:else}
 					<button
-						class="btn"
+						class="btn primary"
 						class:err={dlState === 'error'}
 						title={dlState === 'error' ? t('download.failedHint') : ''}
 						onclick={() => void downloadPackage()}
@@ -405,35 +405,42 @@
 		height: 100%;
 		display: grid;
 		grid-template-columns: 280px 1fr;
-		gap: 10px;
-		padding: 10px;
+		gap: 14px;
+		padding: 14px;
 	}
 
+	/* 炭绿卡片浮于橄榄灰页面（编辑器面板层次） */
 	.tree-panel,
 	.files-panel {
 		min-height: 0; /* grid 子项内部滚动 */
 		background: var(--bg-l2);
-		border: 1px solid var(--bg-l3);
-		border-radius: var(--radius);
+		border: 1px solid color-mix(in srgb, var(--bg-l3) 55%, transparent);
+		border-radius: var(--radius-lg);
+		box-shadow: 0 4px 18px rgb(0 0 0 / 0.28);
 		overflow: hidden;
 		display: flex;
 		flex-direction: column;
 	}
 
+	/* 节标题：小号弱化 + 文字下缀薄荷短划线（编辑器「颜色」节同款） */
 	.panel-title {
 		flex: none;
-		padding: 10px 14px;
-		font-size: 12px;
-		font-weight: 600;
-		letter-spacing: 1px;
+		padding: 12px 14px 9px;
+		border-bottom: 1px solid color-mix(in srgb, var(--bg-l3) 55%, transparent);
+	}
+	.panel-title > span {
+		font-size: 11px;
+		font-weight: 700;
+		letter-spacing: 2px;
 		color: var(--text-faint);
-		border-bottom: 1px solid var(--bg-l3);
+		padding-bottom: 4px;
+		border-bottom: 2px solid var(--accent);
 	}
 
 	.tree {
 		flex: 1;
 		overflow: auto;
-		padding: 6px;
+		padding: 8px;
 	}
 
 	.hint {
@@ -450,6 +457,12 @@
 		background: transparent;
 		color: var(--accent-bright);
 		cursor: pointer;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease;
+	}
+	.retry:hover {
+		background: var(--bg-l3);
 	}
 
 	/* 面板头：面包屑 + 整包下载 */
@@ -460,8 +473,8 @@
 		justify-content: space-between;
 		gap: 10px;
 		padding: 8px 12px;
-		border-bottom: 1px solid var(--bg-l3);
-		min-height: 44px;
+		border-bottom: 1px solid color-mix(in srgb, var(--bg-l3) 55%, transparent);
+		min-height: 46px;
 	}
 
 	.crumbs {
@@ -481,6 +494,9 @@
 		border-radius: var(--radius);
 		cursor: pointer;
 		white-space: nowrap;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease;
 	}
 	.crumb:hover {
 		background: var(--bg-l3);
@@ -501,31 +517,52 @@
 		font-size: 12px;
 	}
 
+	/* 次级按钮：ghost 浮起；主按钮 .primary：薄荷填充 + 深色文字 */
 	.btn {
 		flex: none;
 		padding: 5px 14px;
-		border: 1px solid var(--accent);
+		border: 1px solid transparent;
 		border-radius: var(--radius);
-		background: var(--accent);
-		color: var(--text);
+		background: transparent;
+		color: var(--text-dim);
 		font-size: 13px;
-		font-weight: 600;
 		text-decoration: none;
 		cursor: pointer;
 		white-space: nowrap;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease,
+			border-color 0.15s ease;
 	}
 	.btn:hover {
-		background: var(--accent-deep);
-		border-color: var(--accent-deep);
+		background: var(--bg-l3);
+		color: var(--text);
+	}
+	.btn.primary {
+		background: var(--accent);
+		color: var(--on-accent);
+		font-weight: 700;
+	}
+	.btn.primary:hover {
+		background: var(--accent-bright);
+		color: var(--on-accent);
 	}
 	.btn:disabled {
 		opacity: 0.55;
 		cursor: default;
 	}
-	/* 打包失败：按钮变红提示，点击即重试 */
+	.btn.primary:disabled:hover {
+		background: var(--accent);
+		color: var(--on-accent);
+	}
+	/* 打包失败：按钮变粉提示，点击即重试 */
 	.btn.err {
-		border-color: var(--accent-pink);
 		background: var(--accent-pink);
+		color: var(--on-accent);
+	}
+	.btn.err:hover {
+		background: var(--accent-pink);
+		color: var(--on-accent);
 	}
 
 	.files-body {
@@ -544,6 +581,6 @@
 		display: flex;
 		justify-content: center;
 		padding: 10px;
-		border-top: 1px solid var(--bg-l3);
+		border-top: 1px solid color-mix(in srgb, var(--bg-l3) 55%, transparent);
 	}
 </style>

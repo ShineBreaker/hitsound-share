@@ -154,7 +154,7 @@
 	}
 	.caret:hover {
 		background: var(--bg-l3);
-		color: var(--text);
+		color: var(--accent-bright);
 	}
 	.caret.open {
 		transform: rotate(90deg);
@@ -185,17 +185,18 @@
 		background: var(--bg-l3);
 		color: var(--text);
 	}
+	/* 选中节点：薄荷填充 + 深色文字（编辑器选中态） */
 	.label.active {
 		background: var(--accent);
-		color: var(--text);
+		color: var(--on-accent);
 	}
-	/* 包名（顶层节点）加粗 + 亮紫 */
+	/* 包名（顶层节点）加粗 + 亮薄荷 */
 	.label.pkg {
 		font-weight: 600;
 		color: var(--accent-bright);
 	}
 	.label.pkg.active {
-		color: var(--text);
+		color: var(--on-accent);
 	}
 
 	/* 行内改名输入：与 label 同高，占满剩余宽度 */
@@ -206,7 +207,7 @@
 		padding: 4px 8px;
 		border: 1px solid var(--accent);
 		border-radius: var(--radius);
-		background: var(--bg-l1);
+		background: var(--bg-inset);
 		color: var(--text);
 		font-family: inherit;
 		font-size: 14px;

@@ -1,27 +1,32 @@
 /*
- * 全局样式：osu!lazer Argon 主题
- * 颜色与圆角规格取自技术方案「Argon 主题落地」：
- * 主紫 #8c66ff、点缀粉 #ff66aa、暗背景三层 #1b171c/#28222a/#362e38、圆角 5px
+ * 全局样式：osu!editor 橄榄绿主题（对齐编辑器界面）
+ * 页面橄榄灰 #31362f、面板炭绿 #1e231e、浮起层 #333b33、凹陷区 #131813；
+ * 主强调薄荷绿 #3fd8a0（填充按钮用深色文字）、点缀粉 #ff7e96、次高亮琥珀 #e8c169；
+ * 圆角 6px（卡片 12px）；字体 Comfortaa 自托管（Torus 的 OFL 开源替代）
  */
 :root {
-	/* 紫阶（lazer 源码提取） */
-	--accent: #8c66ff; /* 主强调 */
-	--accent-bright: #b299ff; /* 亮紫：渐变起点 / 高亮 */
-	--accent-deep: #7047eb; /* 深紫：按下 / 滚动条悬停 */
-	--accent-pink: #ff66aa; /* 品牌粉点缀 */
+	/* 薄荷绿阶（编辑器主强调） */
+	--accent: #3fd8a0; /* 主强调 */
+	--accent-bright: #8ceec8; /* 亮薄荷：高亮文字 / 渐变起点 */
+	--accent-deep: #25a97a; /* 深薄荷：按下 / 滚动条悬停 */
+	--on-accent: #0c1610; /* 薄荷填充上的深色文字 */
+	--accent-pink: #ff7e96; /* 播放指示 / 危险 / 警示 */
+	--accent-amber: #e8c169; /* 次级高亮 */
 
-	/* 暗背景三层 */
-	--bg-l1: #1b171c; /* 页面底 */
-	--bg-l2: #28222a; /* 面板 */
-	--bg-l3: #362e38; /* hover / 浮层 */
+	/* 暗背景四层（编辑器特征：页面亮于面板，凹陷区最深） */
+	--bg-l1: #31362f; /* 页面底：橄榄灰 */
+	--bg-l2: #1e231e; /* 面板 / 卡片：炭绿 */
+	--bg-l3: #333b33; /* 浮起：hover / 格子 / 次级按钮 / 分隔线 */
+	--bg-inset: #131813; /* 凹陷：输入框 / 日志盒 */
 
 	/* 文字 */
-	--text: #ffffff;
-	--text-dim: #a89fae;
-	--text-faint: #7a7083;
+	--text: #eef2ec;
+	--text-dim: #a9b2a5;
+	--text-faint: #76816f;
 
 	/* 形状 */
-	--radius: 5px;
+	--radius: 6px;
+	--radius-lg: 12px;
 
 	/* 字体：Comfortaa 自托管 woff2（@fontsource，构建期打包，无外链 CDN），中文回退系统栈 */
 	--font-ui:
@@ -31,6 +36,9 @@
 		'Microsoft YaHei',
 		'Noto Sans CJK SC',
 		sans-serif;
+
+	/* 原生控件（下拉/单选/滚动条）走暗色渲染 */
+	color-scheme: dark;
 }
 
 * {
@@ -58,6 +66,16 @@ body {
 	font-variant-numeric: tabular-nums;
 }
 
+::selection {
+	background: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* 键盘焦点统一薄荷描边 */
+:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
+}
+
 /* 暗色滚动条 */
 ::-webkit-scrollbar {
 	width: 10px;
@@ -68,10 +86,14 @@ body {
 }
 ::-webkit-scrollbar-thumb {
 	background: var(--bg-l3);
-	border-radius: var(--radius);
+	border-radius: 999px;
+	border: 2px solid transparent;
+	background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
 	background: var(--accent-deep);
+	background-clip: padding-box;
+	border: 2px solid transparent;
 }
 
 button {

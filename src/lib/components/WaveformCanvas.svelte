@@ -1,5 +1,5 @@
 <script lang="ts">
-	// 波形画布：peaks 渲染为居中对称柱状（紫色渐变）；
+	// 波形画布：peaks 渲染为居中对称柱状（薄荷渐变，色值取自 CSS 变量）；
 	// - progress(0-1)：已播部分实色、未播半透明
 	// - 点击波形任意位置 → onseek(比例)，由上层完成跳播
 	// - 进入视口时 onvisible() 一次，触发上层按需拉取 peaks
@@ -14,6 +14,8 @@
 	let { peaks, progress = 0, onseek, onvisible }: Props = $props();
 
 	let canvas: HTMLCanvasElement | undefined = $state();
+	let colBright = '#8ceec8'; // mount 时由 CSS 变量覆盖（兜底值与主题一致）
+	let colAccent = '#3fd8a0';
 
 	function draw(): void {
 		if (!canvas) return;
@@ -30,11 +32,11 @@
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, w, h);
 
-		// 垂直渐变：亮紫 → 主紫 → 亮紫
+		// 垂直渐变：亮薄荷 → 主薄荷 → 亮薄荷
 		const grad = ctx.createLinearGradient(0, 0, 0, h);
-		grad.addColorStop(0, '#b299ff');
-		grad.addColorStop(0.5, '#8c66ff');
-		grad.addColorStop(1, '#b299ff');
+		grad.addColorStop(0, colBright);
+		grad.addColorStop(0.5, colAccent);
+		grad.addColorStop(1, colBright);
 		ctx.fillStyle = grad;
 
 		const n = peaks.length;
@@ -56,6 +58,10 @@
 	});
 
 	onMount(() => {
+		// 主题色取自 CSS 变量（DESIGN.md：画布不落裸色值）
+		const cs = getComputedStyle(document.documentElement);
+		colBright = cs.getPropertyValue('--accent-bright').trim() || colBright;
+		colAccent = cs.getPropertyValue('--accent').trim() || colAccent;
 		// 容器宽度变化（窗口缩放）时重绘
 		const ro = new ResizeObserver(() => draw());
 		ro.observe(canvas!);

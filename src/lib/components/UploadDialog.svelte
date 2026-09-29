@@ -24,6 +24,7 @@
 	let pendingFile = $state<File | null>(null); // confirm 阶段持有的单音频文件
 	let groupName = $state('');
 	let fileInput = $state<HTMLInputElement | undefined>();
+	let dropOver = $state(false); // 拖放区悬停高亮
 
 	// confirm 阶段的目标模式：新建分组 / 附加到现有分组（有自己的 visible 包才有附加选项）
 	type Mode = 'new' | 'append';
@@ -207,10 +208,9 @@
 
 	// 压缩包与单音频分流仍按扩展名（.rar 允许进入）；压缩包内部格式由 readArchive 按魔数判定
 	const ARCHIVE_EXTS = ['zip', 'rar'];
-	async function onFileChosen(e: Event): Promise<void> {
-		const input = e.target as HTMLInputElement;
-		const file = input.files?.[0];
-		if (!file) return;
+
+	/** 选定文件（文件选择器 / 拖放区共用入口） */
+	function chooseFile(file: File): void {
 		const ext = fileExt(file.name);
 		addLog('info', `选择文件 ${file.name}（${fmtBytes(file.size)}）`);
 		if (!ARCHIVE_EXTS.includes(ext) && !['wav', 'ogg', 'mp3'].includes(ext)) {
@@ -227,6 +227,11 @@
 		appendTarget = '';
 		phase = 'confirm';
 		void loadMyPackages();
+	}
+
+	function onFileChosen(e: Event): void {
+		const file = (e.target as HTMLInputElement).files?.[0];
+		if (file) chooseFile(file);
 	}
 
 	function confirmUpload(): void {
@@ -400,22 +405,63 @@
 		<h2>{t('upload.title')}</h2>
 
 		{#if phase === 'idle'}
-			<p class="hint">{t('upload.hint')}</p>
-			<input
-				bind:this={fileInput}
-				type="file"
-				accept=".zip,.rar,.wav,.ogg,.mp3"
-				onchange={(e) => void onFileChosen(e)}
-			/>
+			<!-- 拖放区（编辑器「把视频文件拖至此处」同款）：label 触发隐藏 input，dragover 高亮 -->
+			<label
+				class="drop"
+				class:over={dropOver}
+				tabindex="0"
+				ondragover={(e) => {
+					if (!e.dataTransfer?.types.includes('Files')) return;
+					e.preventDefault();
+					e.dataTransfer.dropEffect = 'copy';
+					dropOver = true;
+				}}
+				ondragleave={(e) => {
+					if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null))
+						dropOver = false;
+				}}
+				ondrop={(e) => {
+					e.preventDefault();
+					dropOver = false;
+					const f = e.dataTransfer?.files?.[0];
+					if (f) chooseFile(f);
+				}}
+				onkeydown={(e) => {
+					if (e.key === 'Enter' || e.key === ' ') {
+						e.preventDefault();
+						fileInput?.click();
+					}
+				}}
+			>
+				<svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true">
+					<path
+						d="M12 4v10m0-10-4 4m4-4 4 4M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.8"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
+				</svg>
+				<span class="drop-text">{t('upload.drop')}</span>
+				<span class="drop-hint">{t('upload.hint')}</span>
+				<input
+					bind:this={fileInput}
+					type="file"
+					accept=".zip,.rar,.wav,.ogg,.mp3"
+					class="vh"
+					onchange={onFileChosen}
+				/>
+			</label>
 		{:else if phase === 'confirm'}
 			<p class="file-line" title={pendingFile?.name}>{pendingFile?.name}</p>
 			{#if visiblePkgs.length > 0}
-				<div class="mode-row" role="radiogroup" aria-label={t('upload.mode.label')}>
-					<label class="mode">
+				<div class="seg" role="radiogroup" aria-label={t('upload.mode.label')}>
+					<label class="seg-item">
 						<input type="radio" bind:group={mode} value="new" />
 						{t('upload.mode.new')}
 					</label>
-					<label class="mode">
+					<label class="seg-item">
 						<input type="radio" bind:group={mode} value="append" />
 						{t('upload.mode.append')}
 					</label>
@@ -515,15 +561,16 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: color-mix(in srgb, var(--bg-l1) 70%, transparent);
+		background: rgb(9 12 9 / 0.62);
+		backdrop-filter: blur(4px);
 	}
 
 	.card {
 		position: relative;
 		width: min(480px, calc(100vw - 40px));
 		background: var(--bg-l2);
-		border: 1px solid var(--bg-l3);
-		border-radius: var(--radius);
+		border: 1px solid color-mix(in srgb, var(--bg-l3) 55%, transparent);
+		border-radius: var(--radius-lg);
 		padding: 22px 24px;
 		box-shadow: 0 12px 40px rgb(0 0 0 / 0.45);
 	}
@@ -539,6 +586,58 @@
 		margin: 10px 0;
 	}
 
+	/* 拖放区：凹陷虚线框，悬停/拖入薄荷描边 */
+	.drop {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+		padding: 30px 20px;
+		border: 1px dashed color-mix(in srgb, var(--text-faint) 55%, transparent);
+		border-radius: 10px;
+		background: var(--bg-inset);
+		cursor: pointer;
+		text-align: center;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease;
+	}
+	.drop:hover {
+		border-color: var(--accent);
+	}
+	.drop.over {
+		border-style: solid;
+		border-color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 10%, var(--bg-inset));
+	}
+
+	.drop-icon {
+		width: 26px;
+		height: 26px;
+		color: var(--accent-bright);
+	}
+
+	.drop-text {
+		font-size: 14px;
+		font-weight: 600;
+		color: var(--text);
+	}
+
+	.drop-hint {
+		font-size: 12px;
+		color: var(--text-faint);
+	}
+
+	/* 隐藏但可激活的文件输入（label 点击触发） */
+	.vh {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+	}
+
 	.phase-text {
 		color: var(--text);
 		font-size: 14px;
@@ -546,7 +645,7 @@
 	}
 
 	.ok {
-		color: var(--accent-bright);
+		color: var(--accent);
 		font-weight: 600;
 		margin: 6px 0;
 	}
@@ -559,14 +658,14 @@
 
 	.bar {
 		height: 8px;
-		border-radius: var(--radius);
-		background: var(--bg-l3);
+		border-radius: 999px;
+		background: var(--bg-inset);
 		overflow: hidden;
 	}
 
 	.fill {
 		height: 100%;
-		background: linear-gradient(90deg, var(--accent), var(--accent-pink));
+		background: linear-gradient(90deg, var(--accent-deep), var(--accent));
 		transition: width 0.2s ease;
 	}
 
@@ -578,39 +677,38 @@
 
 	.btn {
 		padding: 6px 16px;
-		border: 1px solid var(--bg-l3);
+		border: 1px solid transparent;
 		border-radius: var(--radius);
 		background: transparent;
 		color: var(--text-dim);
 		font-size: 13px;
 		cursor: pointer;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease;
 	}
 	.btn:hover {
 		background: var(--bg-l3);
 		color: var(--text);
 	}
 	.btn.primary {
-		border-color: var(--accent);
 		background: var(--accent);
-		color: var(--text);
-		font-weight: 600;
+		color: var(--on-accent);
+		font-weight: 700;
 	}
 	.btn.primary:hover {
-		background: var(--accent-deep);
-		border-color: var(--accent-deep);
+		background: var(--accent-bright);
+		color: var(--on-accent);
 	}
 
-	input[type='file'] {
-		width: 100%;
-		color: var(--text-dim);
-		font-family: inherit;
-	}
-
-	/* confirm 阶段：待上传文件名 + 分组名输入 */
+	/* confirm 阶段：待上传文件名（凹陷行）+ 分组名输入 */
 	.file-line {
 		color: var(--text-dim);
 		font-size: 13px;
 		margin: 4px 0 12px;
+		padding: 8px 10px;
+		border-radius: var(--radius);
+		background: var(--bg-inset);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -629,7 +727,7 @@
 		padding: 7px 10px;
 		border: 1px solid var(--bg-l3);
 		border-radius: var(--radius);
-		background: var(--bg-l1);
+		background: var(--bg-inset);
 		color: var(--text);
 		font-family: inherit;
 		font-size: 13px;
@@ -639,24 +737,45 @@
 		border-color: var(--accent);
 	}
 
-	/* confirm 阶段：新建 / 附加 模式切换 */
-	.mode-row {
+	/* confirm 阶段：新建 / 附加 分段选择器（编辑器 chip 组同款） */
+	.seg {
 		display: flex;
-		gap: 14px;
+		gap: 4px;
+		padding: 3px;
 		margin: 4px 0 12px;
+		background: var(--bg-inset);
+		border: 1px solid var(--bg-l3);
+		border-radius: 8px;
 	}
 
-	.mode {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
+	.seg-item {
+		flex: 1;
+		position: relative;
+		text-align: center;
+		padding: 5px 10px;
+		border-radius: var(--radius);
 		color: var(--text-dim);
 		font-size: 13px;
 		cursor: pointer;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease;
 	}
-
-	.mode input {
-		accent-color: var(--accent);
+	.seg-item:hover {
+		color: var(--text);
+	}
+	.seg-item input {
+		position: absolute;
+		opacity: 0;
+		pointer-events: none;
+	}
+	.seg-item:has(input:checked) {
+		background: var(--accent);
+		color: var(--on-accent);
+		font-weight: 600;
+	}
+	.seg-item:has(input:focus-visible) {
+		outline: 2px solid var(--accent);
 	}
 
 	.btn:disabled {
@@ -666,6 +785,11 @@
 	.btn:disabled:hover {
 		background: transparent;
 		color: var(--text-dim);
+	}
+	.btn.primary:disabled,
+	.btn.primary:disabled:hover {
+		background: var(--accent);
+		color: var(--on-accent);
 	}
 
 	/* 失败详情日志：默认收缩（details），旁边复制按钮一键带走全文 */
@@ -681,7 +805,7 @@
 		min-width: 0;
 		border: 1px solid var(--bg-l3);
 		border-radius: var(--radius);
-		background: var(--bg-l1);
+		background: var(--bg-inset);
 	}
 
 	.logbox summary {

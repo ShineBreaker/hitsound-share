@@ -117,7 +117,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: color-mix(in srgb, var(--bg-l1) 70%, transparent);
+		background: rgb(9 12 9 / 0.62);
+		backdrop-filter: blur(4px);
 	}
 
 	.card {
@@ -126,8 +127,8 @@
 		max-height: 80vh;
 		overflow: auto;
 		background: var(--bg-l2);
-		border: 1px solid var(--bg-l3);
-		border-radius: var(--radius);
+		border: 1px solid color-mix(in srgb, var(--bg-l3) 55%, transparent);
+		border-radius: var(--radius-lg);
 		padding: 22px 24px;
 		box-shadow: 0 12px 40px rgb(0 0 0 / 0.45);
 	}
@@ -169,6 +170,7 @@
 		gap: 12px;
 		padding: 8px 10px;
 		border-radius: var(--radius);
+		transition: background 0.15s ease;
 	}
 	.item:hover {
 		background: var(--bg-l3);
@@ -204,19 +206,23 @@
 		font-size: 11px;
 	}
 	.badge.pending {
-		background: color-mix(in srgb, var(--accent-pink) 22%, transparent);
-		color: var(--accent-pink);
+		background: color-mix(in srgb, var(--accent-amber) 22%, transparent);
+		color: var(--accent-amber);
 	}
 
 	.del {
 		flex: none;
 		padding: 4px 12px;
-		border: 1px solid var(--bg-l3);
+		border: 1px solid transparent;
 		border-radius: var(--radius);
 		background: transparent;
 		color: var(--text-dim);
 		font-size: 12px;
 		cursor: pointer;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease,
+			border-color 0.15s ease;
 	}
 	.del:hover {
 		border-color: var(--accent-pink);
@@ -246,10 +252,16 @@
 	.btn {
 		margin-top: 8px;
 		padding: 4px 14px;
-		border: 1px solid var(--bg-l3);
+		border: 1px solid transparent;
 		border-radius: var(--radius);
 		background: transparent;
 		color: var(--accent-bright);
 		cursor: pointer;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease;
+	}
+	.btn:hover {
+		background: var(--bg-l3);
 	}
 </style>
