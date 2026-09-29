@@ -1,5 +1,5 @@
 <script lang="ts">
-	// 全局布局壳：顶栏（站名 + 登录/上传）+ 内容区
+	// 全局布局壳：顶栏（站名 + 登录态/上传/我的上传）+ 内容区
 	// Exo 2 走 @fontsource（npm 内自托管 woff2，构建期打包进产物，无外链 CDN）
 	import '@fontsource/exo-2/400.css';
 	import '@fontsource/exo-2/500.css';
@@ -8,20 +8,43 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
-	import { fetchConfig } from '$lib/api';
+	import { fetchConfig, fetchMe } from '$lib/api';
+	import UploadDialog from '$lib/components/UploadDialog.svelte';
+	import MyPackages from '$lib/components/MyPackages.svelte';
 
 	let { children } = $props();
 
-	// 登录/上传入口按 /api/config 显隐：OSU OAuth 凭证未配置时隐藏（浏览/试听/下载不受影响）。
+	// 登录/上传入口按 /api/config 显隐：上传链路凭证未配齐时隐藏（浏览/试听/下载不受影响）。
 	// 预渲染 HTML 中初始为 false（隐藏），客户端拉到配置后再显形，避免烘错部署期状态
 	let uploadEnabled = $state(false);
+	let me = $state<{ username: string } | null>(null);
+	let showUpload = $state(false);
+	let showMy = $state(false);
+
 	onMount(async () => {
 		try {
 			uploadEnabled = (await fetchConfig()).uploadEnabled;
 		} catch {
 			// 配置拉取失败按未启用处理
 		}
+		if (!uploadEnabled) return;
+		const data = await fetchMe();
+		if (data.loggedIn && data.username) me = { username: data.username };
 	});
+
+	async function logout(): Promise<void> {
+		await fetch('/api/auth/logout', { method: 'POST' }).catch(() => null);
+		location.reload();
+	}
+
+	/** 未登录点上传 → 先走 OAuth 登录 */
+	function onUploadClick(): void {
+		if (!me) {
+			location.href = '/api/auth/login';
+			return;
+		}
+		showUpload = true;
+	}
 </script>
 
 <div class="shell">
@@ -33,8 +56,17 @@
 		</div>
 		<div class="actions">
 			{#if uploadEnabled}
-				<button class="btn" type="button">{t('app.login')}</button>
-				<button class="btn primary" type="button">{t('app.upload')}</button>
+				{#if me}
+					<button class="user" type="button" onclick={() => (showMy = true)} title={me.username}>
+						{me.username}
+					</button>
+					<button class="linklike" type="button" onclick={() => void logout()}>
+						{t('auth.logout')}
+					</button>
+				{:else}
+					<a class="btn" href="/api/auth/login">{t('app.login')}</a>
+				{/if}
+				<button class="btn primary" type="button" onclick={onUploadClick}>{t('app.upload')}</button>
 			{/if}
 		</div>
 	</header>
@@ -43,6 +75,13 @@
 		{@render children()}
 	</main>
 </div>
+
+{#if showUpload}
+	<UploadDialog onclose={() => (showUpload = false)} />
+{/if}
+{#if showMy}
+	<MyPackages onclose={() => (showMy = false)} />
+{/if}
 
 <style>
 	.shell {
@@ -98,6 +137,7 @@
 
 	.actions {
 		display: flex;
+		align-items: center;
 		gap: 8px;
 	}
 
@@ -109,6 +149,8 @@
 		color: var(--text-dim);
 		font-size: 13px;
 		cursor: pointer;
+		text-decoration: none;
+		display: inline-block;
 	}
 	.btn:hover {
 		background: var(--bg-l3);
@@ -124,6 +166,37 @@
 	.btn.primary:hover {
 		background: var(--accent-deep);
 		border-color: var(--accent-deep);
+	}
+
+	/* 已登录用户名按钮（打开我的上传） */
+	.user {
+		max-width: 140px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		border: none;
+		background: transparent;
+		color: var(--accent-bright);
+		font-size: 13px;
+		font-weight: 600;
+		cursor: pointer;
+		padding: 6px 8px;
+		border-radius: var(--radius);
+	}
+	.user:hover {
+		background: var(--bg-l3);
+	}
+
+	.linklike {
+		border: none;
+		background: transparent;
+		color: var(--text-faint);
+		font-size: 12px;
+		cursor: pointer;
+		padding: 6px 4px;
+	}
+	.linklike:hover {
+		color: var(--text);
 	}
 
 	.content {

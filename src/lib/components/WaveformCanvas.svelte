@@ -81,7 +81,6 @@
 	bind:this={canvas}
 	class="wave"
 	class:placeholder={!peaks}
-	role="img"
 	onclick={(e) => {
 		const rect = canvas!.getBoundingClientRect();
 		onseek?.(Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)));

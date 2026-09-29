@@ -32,6 +32,15 @@ export function fetchConfig(): Promise<{ uploadEnabled: boolean }> {
 	return getJSON('/api/config');
 }
 
+/** 当前登录态（未配置/未登录均返回 loggedIn:false） */
+export async function fetchMe(): Promise<{ loggedIn: boolean; username?: string }> {
+	try {
+		return await getJSON('/api/auth/me');
+	} catch {
+		return { loggedIn: false };
+	}
+}
+
 // 波形模块级缓存：跨文件夹切换复用；存 Promise 防同 id 并发重复请求
 const peaksCache = new Map<string, Promise<number[] | null>>();
 export function fetchPeaks(id: string): Promise<number[] | null> {

@@ -1,0 +1,40 @@
+// 统一密钥读取：Pages 环境变量（platform.env）优先，本地 dev 兜底 process.env；
+// 凭证只从环境读，绝不硬编码、不打印（Mimosa 约束）
+export interface Secrets {
+	OSU_CLIENT_ID: string;
+	OSU_CLIENT_SECRET: string;
+	SESSION_SECRET: string;
+	ADMIN_OSU_ID: string;
+	R2_ACCESS_KEY_ID: string;
+	R2_SECRET_ACCESS_KEY: string;
+	R2_ACCOUNT_ID: string;
+	/** 可选：显式 OAuth 回调地址（默认取请求 origin + /api/auth/callback） */
+	OSU_REDIRECT_URI: string;
+}
+
+export type SecretsKey = keyof Secrets;
+
+export function getSecrets(platform: App.Platform | undefined): Partial<Secrets> {
+	const bindings = platform?.env as Record<string, string | undefined> | undefined;
+	const proc: Record<string, string | undefined> =
+		typeof process !== 'undefined' ? process.env : {};
+	const pick = (key: SecretsKey): string | undefined => {
+		const v = bindings?.[key] ?? proc[key];
+		return v && v.length > 0 ? v : undefined;
+	};
+	return {
+		OSU_CLIENT_ID: pick('OSU_CLIENT_ID'),
+		OSU_CLIENT_SECRET: pick('OSU_CLIENT_SECRET'),
+		SESSION_SECRET: pick('SESSION_SECRET'),
+		ADMIN_OSU_ID: pick('ADMIN_OSU_ID'),
+		R2_ACCESS_KEY_ID: pick('R2_ACCESS_KEY_ID'),
+		R2_SECRET_ACCESS_KEY: pick('R2_SECRET_ACCESS_KEY'),
+		R2_ACCOUNT_ID: pick('R2_ACCOUNT_ID'),
+		OSU_REDIRECT_URI: pick('OSU_REDIRECT_URI')
+	};
+}
+
+/** 是否为管理员（ADMIN_OSU_ID 环境变量比对，每次实时判定，不落 session） */
+export function isAdmin(secrets: Partial<Secrets>, osuId: number): boolean {
+	return Boolean(secrets.ADMIN_OSU_ID && secrets.ADMIN_OSU_ID === String(osuId));
+}
