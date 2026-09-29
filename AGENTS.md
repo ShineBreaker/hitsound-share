@@ -30,7 +30,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 ## 硬性规则
 
 1. 服务端出网只允许 `src/lib/server/osu.ts` 一条通道：协议必须 https、host 必须是 `osu.ppy.sh`；禁止在其他服务端代码新增 fetch/出网（Mimosa 验收条件：拒绝 localhost、环回、私有和保留地址）
-2. 凭证只从环境变量读（`getSecrets()`），严禁硬编码、打印、入库；`.env` 已 gitignore
+2. 凭证只从环境变量读（`getSecrets()`），严禁硬编码、打印、入库；`.env` 已 gitignore。Agent 不得读取、展示、复制 `.env` 或 Pages 变量中的密钥**值**，不得把任何密钥发往外部（含日志、issue、对话输出）；任何对外发送数据的操作须逐次征得用户确认
 3. 内容寻址存储：R2 key = `blobs/<hash前2>/<sha256>.<ext>`，`blobs.refcount` 管生命周期——删包时 refcount--，归零才能删 R2 对象；整包 zip 在 `packages/<pid>/original.zip`
 4. 文件/文件夹名含 `#`、空格、`&`、逗号是常态：渲染必须转义，URL 必须用 URLSearchParams/encodeURIComponent
 5. 上传链路优雅降级：7 个环境变量（OSU_CLIENT_ID / OSU_CLIENT_SECRET / SESSION_SECRET / ADMIN_OSU_ID / R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY）任一缺失 → `/api/config` 返回 `uploadEnabled=false` → 前端隐藏登录/上传入口，浏览/试听/下载不受影响；改上传链路时保持该行为
