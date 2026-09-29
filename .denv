@@ -1,0 +1,6 @@
+# denv managed — 由 denv 自动生成，记录项目声明式配置
+# 修改后运行 denv load 即可回放
+langs=
+llm=true
+guix=true
+full=false

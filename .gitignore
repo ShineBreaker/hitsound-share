@@ -1,0 +1,12 @@
+# direnv
+.direnv/
+
+# Editor
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+.agents/workfile/
+.mimosa
