@@ -14,7 +14,11 @@
 	let files = $state<FileRow[]>([]);
 	let total = $state(0);
 	let loading = $state(false);
-	let loadError = $state(false);
+	let loadError = $state(false); // 文件列表加载失败
+	let treeLoaded = $state(false); // 树已成功加载（区分「加载中」与「库为空」）
+	let treeError = $state(false); // 树加载失败
+	let moreLoading = $state(false); // 「加载更多」请求进行中（防连点重复追加）
+	let pageSeq = 0; // 文件页请求序号：只接受最新请求的响应，防止快速切换文件夹时旧响应后到覆盖
 
 	const PAGE_SIZE = 200;
 
@@ -27,7 +31,7 @@
 	let playingFile: FileRow | null = null;
 
 	const forest = $derived(buildForest(packages));
-	const treeLoading = $derived(packages.length === 0 && !loadError);
+	const treeLoading = $derived(!treeLoaded && !treeError);
 
 	// 面包屑：包名 > 文件夹各级（可点各级回跳）
 	const crumbs = $derived.by(() => {
@@ -48,17 +52,45 @@
 	async function loadPage(key: string, append: boolean): Promise<void> {
 		const { pkg, folder } = parseNodeKey(key);
 		if (!pkg) return;
-		if (!append) loading = true;
+		if (append) {
+			if (moreLoading) return; // 上一页仍在途，忽略连点
+			moreLoading = true;
+		} else {
+			loading = true;
+		}
 		loadError = false;
+		const seq = ++pageSeq;
 		try {
 			const res = await fetchFiles(pkg, folder, append ? files.length : 0, PAGE_SIZE);
+			if (seq !== pageSeq) return; // 期间已有更新的选择，丢弃过期响应
 			files = append ? [...files, ...res.files] : res.files;
-			total = res.total;
+			if (!append) total = res.total; // append 页服务端跳过 COUNT 返回 -1，保留首页计数
 		} catch {
-			loadError = true;
-			if (!append) files = [];
+			if (seq === pageSeq && !append) {
+				loadError = true;
+				files = [];
+			}
 		} finally {
-			loading = false;
+			if (seq === pageSeq) {
+				loading = false;
+				moreLoading = false;
+			}
+		}
+	}
+
+	/** 拉树并默认选中第一个包；树加载失败可重试本流程 */
+	async function initTree(): Promise<void> {
+		treeError = false;
+		try {
+			const res = await fetchTree();
+			packages = res.packages;
+			treeLoaded = true;
+			if (packages.length > 0) {
+				selected = `pkg:${packages[0].id}`;
+				await loadPage(selected, false);
+			}
+		} catch {
+			treeError = true;
 		}
 	}
 
@@ -84,12 +116,12 @@
 		void audio.play();
 	}
 
-	/** 点波形：当前行直接跳；别的行先播再等 metadata 后跳 */
+	/** 点波形：当前行直接跳；别的行先播、metadata 就绪后再跳 */
 	function seek(file: FileRow, ratio: number): void {
 		if (!audio) return;
 		if (playingId !== file.id) {
-			pendingSeek = ratio;
-			togglePlay(file);
+			togglePlay(file); // 先切换曲目（内部会清 pendingSeek）
+			pendingSeek = ratio; // 再记跳播比例，等 loadedmetadata 应用
 			return;
 		}
 		const dur = file.durationS ?? audio.duration;
@@ -124,19 +156,8 @@
 			pendingSeek = null;
 		});
 
-		// 初始加载树并默认选中第一个包
-		void (async () => {
-			try {
-				const res = await fetchTree();
-				packages = res.packages;
-				if (packages.length > 0) {
-					selected = `pkg:${packages[0].id}`;
-					await loadPage(selected, false);
-				}
-			} catch {
-				loadError = true;
-			}
-		})();
+		// 初始加载树并默认选中第一个包（失败可经树面板重试按钮重走本流程）
+		void initTree();
 	});
 </script>
 
@@ -146,8 +167,13 @@
 		<nav class="tree">
 			{#if treeLoading}
 				<div class="hint">{t('table.loading')}</div>
+			{:else if treeError}
+				<div class="hint">
+					{t('error.load')}
+					<button class="retry" onclick={() => void initTree()}>{t('action.retry')}</button>
+				</div>
 			{:else if forest.length === 0}
-				<div class="hint">{loadError ? t('error.load') : t('tree.empty')}</div>
+				<div class="hint">{t('tree.empty')}</div>
 			{:else}
 				{#each forest as node (node.key)}
 					<TreeView {node} {selected} onselect={select} />
@@ -195,8 +221,8 @@
 
 		{#if !loading && !loadError && files.length < total}
 			<div class="files-foot">
-				<button class="btn" onclick={() => void loadPage(selected, true)}>
-					{t('table.loadMore')}（{files.length}/{total}）
+				<button class="btn" disabled={moreLoading} onclick={() => void loadPage(selected, true)}>
+					{moreLoading ? t('table.loading') : `${t('table.loadMore')}（${files.length}/${total}）`}
 				</button>
 			</div>
 		{/if}
@@ -320,6 +346,10 @@
 	.btn:hover {
 		background: var(--accent-deep);
 		border-color: var(--accent-deep);
+	}
+	.btn:disabled {
+		opacity: 0.55;
+		cursor: default;
 	}
 
 	.files-body {

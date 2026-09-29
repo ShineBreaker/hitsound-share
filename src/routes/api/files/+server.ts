@@ -35,19 +35,33 @@ export const GET: RequestHandler = async ({ platform, url }) => {
 		.first<{ id: string }>();
 	if (!exists) return json({ error: 'package_not_found' }, { status: 404 });
 
-	// 计数 + 当前页，batch 一次往返
-	const [countRes, pageRes] = await env.DB.batch([
-		env.DB.prepare('SELECT COUNT(*) AS c FROM files WHERE package_id = ?1 AND folder_path = ?2').bind(pkg, folder),
-		env.DB.prepare(
-			`SELECT id, name, format, duration_s, sample_rate, bit_depth, channels, size_bytes
-			 FROM files WHERE package_id = ?1 AND folder_path = ?2
-			 ORDER BY name COLLATE NOCASE
-			 LIMIT ?3 OFFSET ?4`
-		).bind(pkg, folder, limit, offset)
-	]);
+	// 计数 + 当前页，batch 一次往返；COUNT(*) 是全文件夹行读，
+	// 「加载更多」（offset>0）时前端已持有 total，跳过计数省行读
+	// 页查询（值全部参数绑定）
+	const pageStmt = env.DB.prepare(
+		`SELECT id, name, format, duration_s, sample_rate, bit_depth, channels, size_bytes
+		 FROM files WHERE package_id = ?1 AND folder_path = ?2
+		 ORDER BY name COLLATE NOCASE
+		 LIMIT ?3 OFFSET ?4`
+	).bind(pkg, folder, limit, offset);
 
-	const total = (countRes.results[0] as { c: number } | undefined)?.c ?? 0;
-	const files: FileRow[] = ((pageRes.results ?? []) as DBFileRow[]).map((r) => ({
+	// 首页（offset=0）batch「COUNT + 当前页」一次往返；
+	// 「加载更多」页前端已持有 total，跳过 COUNT（它是整个文件夹的全行读）只查当前页
+	let total = -1;
+	let rows: DBFileRow[];
+	if (offset === 0) {
+		const [countRes, pageRes] = await env.DB.batch([
+			env.DB.prepare('SELECT COUNT(*) AS c FROM files WHERE package_id = ?1 AND folder_path = ?2').bind(pkg, folder),
+			pageStmt
+		]);
+		total = (countRes.results[0] as { c: number } | undefined)?.c ?? 0;
+		rows = (pageRes.results ?? []) as DBFileRow[];
+	} else {
+		const pageRes = await pageStmt.all();
+		rows = (pageRes.results ?? []) as DBFileRow[];
+	}
+
+	const files: FileRow[] = rows.map((r) => ({
 		id: r.id,
 		name: r.name,
 		folderPath: folder,

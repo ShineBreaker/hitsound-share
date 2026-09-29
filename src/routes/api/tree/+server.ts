@@ -25,5 +25,10 @@ export const GET: RequestHandler = async ({ platform }) => {
 		}
 		pkg.folders.push(row.folder_path);
 	}
-	return json({ packages: [...byId.values()] });
+	// 树查询是 files 覆盖索引全扫描（lasse 库约 2400 行读/次）：
+	// 浏览器缓存 60 秒，重复页面加载不再打 D1（新上传最迟 1 分钟可见，浏览场景可接受）
+	return json(
+		{ packages: [...byId.values()] },
+		{ headers: { 'Cache-Control': 'public, max-age=60' } }
+	);
 };

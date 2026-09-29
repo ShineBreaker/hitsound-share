@@ -6,7 +6,18 @@ const config = {
 	preprocess: vitePreprocess(),
 	kit: {
 		// 部署到 Cloudflare Pages：API 路由编译为 Pages Functions，R2/D1 走 bindings
-		adapter: adapter()
+		adapter: adapter(),
+		// 内容安全策略（安全基线：default-src 'self'）。
+		// mode auto：SSR 响应用 nonce，预渲染页用 hash —— SvelteKit 会为水合内联脚本
+		// 自动追加 nonce/hash，无需手写 script-src；字体/CSS/API/音频均为同源，走 default-src 兜底
+		csp: {
+			mode: 'auto',
+			directives: {
+				'default-src': ['self'],
+				'object-src': ['none'],
+				'base-uri': ['self']
+			}
+		}
 	}
 };
 

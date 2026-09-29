@@ -51,7 +51,7 @@ export function buildForest(packages: TreePackage[]): TreeNode[] {
 		const root: TreeNode = { name: p.name, key: `pkg:${p.id}`, isPackage: true, children: [] };
 		const byPath = new Map<string, TreeNode>([['', root]]);
 
-		// 逐级补全中间路径节点（'a/b/c' 逐段挂到父节点；slash=-1 时父路径为 '' = 包根）
+		// 逐级补全中间路径节点（'a/b/c' 逐段挂到父节点；顶层无斜杠时父路径为 '' = 包根）
 		const ensureFolder = (path: string): TreeNode => {
 			const hit = byPath.get(path);
 			if (hit) return hit;
@@ -63,7 +63,8 @@ export function buildForest(packages: TreePackage[]): TreeNode[] {
 				children: []
 			};
 			byPath.set(path, node);
-			ensureFolder(path.slice(0, slash)).children.push(node);
+			// 注意：slash === -1 时父路径必须是 ''（包根），slice(0, -1) 会变成去尾字符
+			ensureFolder(slash === -1 ? '' : path.slice(0, slash)).children.push(node);
 			return node;
 		};
 
