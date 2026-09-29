@@ -23,7 +23,19 @@ const zh = {
 
 	// 文件表状态
 	'table.empty': '该文件夹没有文件',
+	'table.loading': '加载中…',
+	'table.loadMore': '加载更多',
 	'table.fileCount': '{count} 个文件',
+
+	// 操作
+	'action.play': '播放',
+	'action.pause': '暂停',
+	'action.download': '下载',
+	'action.downloadPackage': '下载整包',
+	'action.retry': '重试',
+
+	// 错误
+	'error.load': '加载失败',
 
 	// 元数据展示
 	'meta.unknown': '—',

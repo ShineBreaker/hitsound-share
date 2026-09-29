@@ -1,13 +1,35 @@
 <script lang="ts">
-	// 文件表：列 = 文件名 / 格式 / 时长 / 采样率 / 采样深度 / 声道 / 波形
-	// 文件名含 # 空格 & 逗号为常态，{name} 直接文本插值（Svelte 默认转义）
+	// 文件表：列 = 播放指示+文件名 / 格式 / 时长 / 采样率 / 采样深度 / 声道 / 波形 / 下载
+	// 文件名含 # 空格 & 逗号为常态，{f.name} 文本插值（Svelte 默认转义）；
+	// URL 一律 encodeURIComponent（id 为 uuid，防御性编码）
 	import type { FileRow } from '$lib/types';
 	import { t } from '$lib/i18n';
+	import { fetchPeaks } from '$lib/api';
 	import WaveformCanvas from './WaveformCanvas.svelte';
 
-	let { files = [] }: { files?: FileRow[] } = $props();
+	interface Props {
+		files: FileRow[];
+		/** 当前播放行 id */
+		playingId?: string | null;
+		/** 当前播放是否暂停（指示条动画用） */
+		paused?: boolean;
+		/** 当前播放进度 0-1（仅播放行传入 WaveformCanvas） */
+		progress?: number;
+		onplay?: (file: FileRow) => void;
+		onseek?: (file: FileRow, ratio: number) => void;
+	}
+	let { files, playingId = null, paused = true, progress = 0, onplay, onseek }: Props = $props();
 
-	/** 时长 mm:ss.s */
+	// 波形按需缓存：undefined=未请求 null=无波形 number[]=已加载
+	let peaksMap = $state<Record<string, number[] | null | undefined>>({});
+
+	async function wantPeaks(id: string): Promise<void> {
+		if (id in peaksMap) return;
+		peaksMap[id] = null; // 占位：标记已请求（null 期间 canvas 显示占位条）
+		peaksMap[id] = await fetchPeaks(id);
+	}
+
+	/** 时长 m:ss.s */
 	function fmtDuration(s: number | null): string {
 		if (s == null) return t('meta.unknown');
 		const m = Math.floor(s / 60);
@@ -29,6 +51,11 @@
 		if (c === 2) return t('meta.channels.stereo');
 		return t('meta.channels.n', { count: c });
 	}
+
+	function playTitle(f: FileRow): string {
+		if (f.id !== playingId) return t('action.play');
+		return paused ? t('action.play') : t('action.pause');
+	}
 </script>
 
 <div class="table-wrap">
@@ -45,23 +72,52 @@
 					<th class="col-num">{t('file.bitDepth')}</th>
 					<th class="col-num">{t('file.channels')}</th>
 					<th class="col-wave">{t('file.waveform')}</th>
+					<th class="col-dl"><span class="sr-only">{t('action.download')}</span></th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each files as f (f.id)}
-					<tr>
-						<td class="col-name" title={f.name}>{f.name}</td>
+					<tr
+						class:playing={f.id === playingId}
+						onclick={() => onplay?.(f)}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') onplay?.(f);
+						}}
+						role="button"
+						tabindex="0"
+						aria-label={playTitle(f)}
+					>
+						<td class="col-name" title={f.name}>
+							{#if f.id === playingId}
+								<!-- 播放指示：三根跳动条（暂停时静止） -->
+								<span class="eq" class:paused aria-hidden="true"><i></i><i></i><i></i></span>
+							{/if}
+							{f.name}
+						</td>
 						<td class="col-num"><span class="fmt">{f.format.toUpperCase()}</span></td>
 						<td class="col-num tnum">{fmtDuration(f.durationS)}</td>
 						<td class="col-num tnum">{fmtSampleRate(f.sampleRate)}</td>
 						<td class="col-num tnum">{fmtBitDepth(f.bitDepth)}</td>
 						<td class="col-num">{fmtChannels(f.channels)}</td>
 						<td class="col-wave">
-							{#if f.peaks}
-								<WaveformCanvas peaks={f.peaks} />
-							{:else}
-								<span class="no-peaks">{t('meta.unknown')}</span>
-							{/if}
+							<WaveformCanvas
+								peaks={peaksMap[f.id]}
+								progress={f.id === playingId ? progress : 0}
+								onvisible={() => void wantPeaks(f.id)}
+								onseek={(ratio) => onseek?.(f, ratio)}
+							/>
+						</td>
+						<td class="col-dl">
+							<a
+								class="dl"
+								href={`/f/${encodeURIComponent(f.id)}/download`}
+								download={f.name}
+								title={t('action.download')}
+								aria-label={t('action.download')}
+								onclick={(e) => e.stopPropagation()}
+							>
+								⤓
+							</a>
 						</td>
 					</tr>
 				{/each}
@@ -73,7 +129,7 @@
 
 <style>
 	.table-wrap {
-		height: 100%;
+		flex: 1;
 		overflow: auto;
 		display: flex;
 		flex-direction: column;
@@ -105,8 +161,17 @@
 		vertical-align: middle;
 	}
 
+	tbody tr {
+		cursor: pointer;
+	}
 	tbody tr:hover td {
 		background: color-mix(in srgb, var(--bg-l3) 55%, transparent);
+		color: var(--text);
+	}
+
+	/* 播放行高亮 */
+	tbody tr.playing td {
+		background: color-mix(in srgb, var(--accent) 16%, transparent);
 		color: var(--text);
 	}
 
@@ -130,6 +195,11 @@
 		width: 220px;
 	}
 
+	.col-dl {
+		width: 36px;
+		text-align: center;
+	}
+
 	/* 格式徽章 */
 	.fmt {
 		display: inline-block;
@@ -142,8 +212,74 @@
 		letter-spacing: 0.5px;
 	}
 
-	.no-peaks {
+	/* 播放指示条：等高动画，暂停时静止并降为半透明 */
+	.eq {
+		display: inline-flex;
+		align-items: flex-end;
+		gap: 2px;
+		height: 12px;
+		margin-right: 7px;
+		vertical-align: middle;
+	}
+	.eq i {
+		width: 2px;
+		background: var(--accent-pink);
+		animation: eq 0.9s infinite ease-in-out alternate;
+	}
+	.eq i:nth-child(1) {
+		height: 60%;
+		animation-delay: -0.3s;
+	}
+	.eq i:nth-child(2) {
+		height: 100%;
+	}
+	.eq i:nth-child(3) {
+		height: 40%;
+		animation-delay: -0.6s;
+	}
+	.eq.paused i {
+		animation-play-state: paused;
+		opacity: 0.5;
+	}
+	@keyframes eq {
+		from {
+			transform: scaleY(0.4);
+		}
+		to {
+			transform: scaleY(1);
+		}
+	}
+
+	/* 行内下载按钮：hover 浮现 */
+	.dl {
+		display: inline-block;
+		width: 24px;
+		height: 24px;
+		line-height: 22px;
+		text-align: center;
+		border-radius: var(--radius);
 		color: var(--text-faint);
+		text-decoration: none;
+		font-size: 15px;
+		opacity: 0;
+		transition: opacity 0.15s ease;
+	}
+	tr:hover .dl,
+	tr.playing .dl,
+	.dl:focus-visible {
+		opacity: 1;
+	}
+	.dl:hover {
+		background: var(--bg-l3);
+		color: var(--accent-bright);
+	}
+
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
 	}
 
 	.empty {

@@ -1,14 +1,27 @@
 <script lang="ts">
-	// 全局布局壳：顶栏（站名 + 登录/上传占位）+ 内容区
+	// 全局布局壳：顶栏（站名 + 登录/上传）+ 内容区
 	// Exo 2 走 @fontsource（npm 内自托管 woff2，构建期打包进产物，无外链 CDN）
 	import '@fontsource/exo-2/400.css';
 	import '@fontsource/exo-2/500.css';
 	import '@fontsource/exo-2/600.css';
 	import '@fontsource/exo-2/700.css';
 	import '../app.css';
+	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
+	import { fetchConfig } from '$lib/api';
 
 	let { children } = $props();
+
+	// 登录/上传入口按 /api/config 显隐：OSU OAuth 凭证未配置时隐藏（浏览/试听/下载不受影响）。
+	// 预渲染 HTML 中初始为 false（隐藏），客户端拉到配置后再显形，避免烘错部署期状态
+	let uploadEnabled = $state(false);
+	onMount(async () => {
+		try {
+			uploadEnabled = (await fetchConfig()).uploadEnabled;
+		} catch {
+			// 配置拉取失败按未启用处理
+		}
+	});
 </script>
 
 <div class="shell">
@@ -19,9 +32,10 @@
 			<span class="tagline">{t('app.tagline')}</span>
 		</div>
 		<div class="actions">
-			<!-- M1 占位按钮：M2 接 osu! OAuth；/api/config 返回 uploadEnabled=false 时隐藏 -->
-			<button class="btn" type="button">{t('app.login')}</button>
-			<button class="btn primary" type="button">{t('app.upload')}</button>
+			{#if uploadEnabled}
+				<button class="btn" type="button">{t('app.login')}</button>
+				<button class="btn primary" type="button">{t('app.upload')}</button>
+			{/if}
 		</div>
 	</header>
 
