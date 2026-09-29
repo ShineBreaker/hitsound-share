@@ -23,9 +23,9 @@
 	/* 形状 */
 	--radius: 5px;
 
-	/* 字体：Exo 2 自托管 woff2（@fontsource，构建期打包，无外链 CDN），中文回退系统栈 */
+	/* 字体：Comfortaa 自托管 woff2（@fontsource，构建期打包，无外链 CDN），中文回退系统栈 */
 	--font-ui:
-		'Exo 2',
+		'Comfortaa',
 		'PingFang SC',
 		'Hiragino Sans GB',
 		'Microsoft YaHei',

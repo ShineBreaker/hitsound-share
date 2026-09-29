@@ -11,7 +11,6 @@
 	},
 	"devDependencies": {
 		"@cloudflare/workers-types": "^5.20260928.1",
-		"@fontsource/exo-2": "^5.3.0",
 		"@sveltejs/adapter-cloudflare": "^7.2.9",
 		"@sveltejs/kit": "^2.70.3",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
@@ -23,6 +22,7 @@
 		"wrangler": "^4.142.0"
 	},
 	"dependencies": {
+		"@fontsource/comfortaa": "^5.3.0",
 		"node-unrar-js": "^2.0.2"
 	}
 }

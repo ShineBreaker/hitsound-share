@@ -1,10 +1,11 @@
 <script lang="ts">
 	// 全局布局壳：顶栏（站名 + 登录态/上传/我的上传）+ 内容区
-	// Exo 2 走 @fontsource（npm 内自托管 woff2，构建期打包进产物，无外链 CDN）
-	import '@fontsource/exo-2/400.css';
-	import '@fontsource/exo-2/500.css';
-	import '@fontsource/exo-2/600.css';
-	import '@fontsource/exo-2/700.css';
+	// Comfortaa 走 @fontsource（npm 内自托管 woff2，构建期打包进产物，无外链 CDN）；
+	// 圆润几何无衬线，作为 osu! 商业字体 Torus 的 OFL 开源替代
+	import '@fontsource/comfortaa/400.css';
+	import '@fontsource/comfortaa/500.css';
+	import '@fontsource/comfortaa/600.css';
+	import '@fontsource/comfortaa/700.css';
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
