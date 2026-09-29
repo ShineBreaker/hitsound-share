@@ -19,3 +19,6 @@ Thumbs.db
 !.env.example
 node_modules/
 
+
+# corepack pnpm shim 与缓存（.envrc 生成）
+.cache/

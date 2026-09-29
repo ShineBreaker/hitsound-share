@@ -1,10 +1,10 @@
 <script lang="ts">
 	// 上传对话框：选 zip 整包或单个音频文件 → fflate 解析 → 每文件 sha256 + 元数据
 	// （wav 手解 RIFF 头，decodeAudioData 得时长/声道/波形；解码失败的文件元数据置 null 仍可上传）
-	// → POST /api/upload（manifest）→ 浏览器直传缺失 blob 与 original.zip（预签名 PUT）
-	// → POST /api/upload/done（服务端核验）→ 完成刷新。
-	// 单音频文件先确认分组名（默认上传者用户名），再现场打成单条目 zip（STORE）走同一链路
-	import { unzip, zipSync } from 'fflate';
+	// → POST /api/upload（manifest，可选 appendTo 附加到现有分组）→ 浏览器直传缺失 blob
+	// （预签名 PUT）→ POST /api/upload/done（服务端核验，附加模式在此合并进目标包）→ 完成刷新。
+	// v4 起不再上传 original.zip（整包下载改为实时打包）
+	import { unzip } from 'fflate';
 	import { t } from '$lib/i18n';
 
 	interface Props {
@@ -22,6 +22,33 @@
 	let pendingFile = $state<File | null>(null); // confirm 阶段持有的单音频文件
 	let groupName = $state('');
 	let fileInput = $state<HTMLInputElement | undefined>();
+
+	// confirm 阶段的目标模式：新建分组 / 附加到现有分组（有自己的 visible 包才有附加选项）
+	type Mode = 'new' | 'append';
+	let mode = $state<Mode>('new');
+	let appendTarget = $state(''); // 附加目标包 id
+	interface MyPkg {
+		id: string;
+		name: string;
+		status: string;
+		file_count: number;
+	}
+	let myPkgs = $state<MyPkg[]>([]);
+	let myPkgsLoaded = $state(false);
+	const visiblePkgs = $derived(myPkgs.filter((p) => p.status === 'visible'));
+
+	/** 进入 confirm 时拉一次我的包列表（附加下拉数据源；失败则不显示附加选项） */
+	async function loadMyPackages(): Promise<void> {
+		if (myPkgsLoaded) return;
+		try {
+			const res = await fetch('/api/my/packages');
+			if (!res.ok) throw new Error();
+			myPkgs = ((await res.json()) as { packages: MyPkg[] }).packages;
+			myPkgsLoaded = true;
+		} catch {
+			/* 未登录/网络失败：保持仅新建模式 */
+		}
+	}
 
 	// 过程日志：失败时展开供用户复制反馈（预签名 URL 只记 host+path，签名参数不落日志）
 	interface LogLine {
@@ -190,28 +217,36 @@
 		// 分组名预填：zip 用文件名，单文件默认上传者用户名
 		pendingFile = file;
 		groupName = ext === 'zip' ? file.name.replace(/\.zip$/i, '') : username;
+		mode = 'new';
+		appendTarget = '';
 		phase = 'confirm';
+		void loadMyPackages();
 	}
 
 	function confirmUpload(): void {
 		const file = pendingFile;
 		const name = groupName.trim();
-		if (!file || !name) return;
+		if (!file) return;
 		const single = fileExt(file.name) !== 'zip';
+		if (mode === 'append') {
+			if (!appendTarget) return;
+			pendingFile = null;
+			addLog('info', `附加到现有分组：${appendTarget}`);
+			void startUpload(file, single, appendTarget);
+			return;
+		}
+		if (!name) return;
 		pendingFile = null;
 		addLog('info', `分组名：${name}`);
-		void startUpload(file, name, single);
+		void startUpload(file, single, null);
 	}
 
-	async function startUpload(file: File, name: string, single: boolean): Promise<void> {
+	async function startUpload(file: File, single: boolean, appendTo: string | null): Promise<void> {
 		phase = 'parsing';
 		skippedCount = 0;
 		try {
 			const entries: Entry[] = [];
 			const blobData = new Map<string, Uint8Array>(); // hash → 原始字节（直传用，天然去重）
-			// original.zip 载荷与大小：zip 整包回放原文件；单文件为现场打包产物
-			let zipBody: File | Uint8Array = file;
-			let zipSize = file.size;
 
 			if (single) {
 				const d = new Uint8Array(await file.arrayBuffer());
@@ -223,10 +258,6 @@
 				entries.push(await buildEntry(file.name, d, ext, hash));
 				progressN = 1;
 				addLog('info', `解析完成：1 个文件（${ext}，sha256 ${hash.slice(0, 12)}…）`);
-				// STORE 不压缩：开销只有 zip 头部，解包得到原字节
-				zipBody = zipSync({ [file.name]: d }, { level: 0 });
-				zipSize = zipBody.length;
-				addLog('info', `打包 original.zip：${fmtBytes(zipSize)}`);
 			} else {
 				const buf = new Uint8Array(await file.arrayBuffer());
 				const files = await new Promise<Record<string, Uint8Array>>((resolve, reject) =>
@@ -261,28 +292,32 @@
 				}
 			}
 
-			// 1. manifest（服务端强校验 + 秒传判定，返回缺失清单与预签名 URL）
+			// 1. manifest（服务端强校验 + 秒传判定，返回缺失清单与预签名 URL；
+			//    附加模式由服务端建影子包，done 核验后合并进目标分组）
 			phase = 'uploading';
 			const mres = await fetch('/api/upload', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name, zipSize, entries })
+				body: JSON.stringify({
+					...(appendTo ? { appendTo } : { name: groupName.trim() }),
+					entries
+				})
 			});
 			const mdata = (await mres.json().catch(() => ({}))) as {
 				packageId?: string;
 				missing?: Array<{ hash: string; url: string }>;
-				zipUrl?: string;
+				appending?: boolean;
 				existingCount?: number;
 				error?: string;
 			};
-			if (!mres.ok || !mdata.packageId || !mdata.zipUrl) {
+			if (!mres.ok || !mdata.packageId) {
 				addLog('error', `POST /api/upload → ${mres.status}${mdata.error ? ` ${mdata.error}` : ''}`);
 				fail(mdata.error ?? 'manifest_failed');
 				return;
 			}
 			addLog(
 				'info',
-				`POST /api/upload → ${mres.status}（待直传 ${mdata.missing?.length ?? 0}，秒传 ${mdata.existingCount ?? 0}）`
+				`POST /api/upload → ${mres.status}（待直传 ${mdata.missing?.length ?? 0}，秒传 ${mdata.existingCount ?? 0}${mdata.appending ? '，附加模式' : ''}）`
 			);
 
 			// 2. 直传缺失 blob（同 hash 已有即秒传跳过）
@@ -306,27 +341,19 @@
 			}
 			if (progressTotal > 0) addLog('info', `音频直传完成：${progressTotal} 个`);
 
-			// 3. original.zip（单文件为现场打包产物）
-			const zres = await fetch(mdata.zipUrl, { method: 'PUT', body: zipBody });
-			if (!zres.ok) {
-				const detail = (await zres.text().catch(() => '')).slice(0, 200);
-				addLog('error', `PUT ${safeUrl(mdata.zipUrl)} → ${zres.status}${detail ? ` ${detail}` : ''}`);
-				fail('put_failed');
-				return;
-			}
-			addLog('info', `PUT original.zip → ${zres.status}`);
-
-			// 4. done 闭环核验
+			// 3. done 闭环核验（附加模式在此合并进目标分组）
 			phase = 'finalizing';
 			const dres = await fetch('/api/upload/done', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ packageId: mdata.packageId, zipSize })
+				body: JSON.stringify({ packageId: mdata.packageId })
 			});
 			if (!dres.ok) {
-				const derr = ((await dres.json().catch(() => ({}))) as { error?: string; bad?: string[] }).error;
+				const derr = ((await dres.json().catch(() => ({}))) as { error?: string }).error;
 				addLog('error', `POST /api/upload/done → ${dres.status}${derr ? ` ${derr}` : ''}`);
-				fail(derr ?? 'blob_mismatch');
+				// 附加模式 404：合并批次可能已完成而响应丢失（影子包已删）——提示刷新确认
+				if (appendTo && derr === 'package_not_found') fail('append_gone');
+				else fail(derr ?? 'blob_mismatch');
 				return;
 			}
 			addLog('info', `POST /api/upload/done → ${dres.status}`);
@@ -343,6 +370,13 @@
 		logs = [];
 		copyState = 'idle';
 		if (fileInput) fileInput.value = '';
+	}
+
+	/** 完成后「立即查看」：先强制预热树缓存（绕 60s max-age），再刷新页面立即可见 */
+	function viewNow(): void {
+		void fetch('/api/tree', { cache: 'reload' })
+			.catch(() => 0)
+			.then(() => location.reload());
 	}
 
 	// 错误码 → 中文（未知码回退网络错误文案；t 对缺失键返回键名本身）
@@ -367,30 +401,54 @@
 			/>
 		{:else if phase === 'confirm'}
 			<p class="file-line" title={pendingFile?.name}>{pendingFile?.name}</p>
-			<label class="lbl" for="group-name">{t('upload.groupName')}</label>
-			<input
-				id="group-name"
-				class="text"
-				bind:value={groupName}
-				maxlength="100"
-				placeholder={username}
-			/>
-			<div class="row">
-				<button class="btn primary" disabled={!groupName.trim()} onclick={confirmUpload}>
-					{t('upload.start')}
-				</button>
-				<button class="btn" onclick={reset}>{t('upload.retry')}</button>
-			</div>
+			{#if visiblePkgs.length > 0}
+				<div class="mode-row" role="radiogroup" aria-label={t('upload.mode.label')}>
+					<label class="mode">
+						<input type="radio" bind:group={mode} value="new" />
+						{t('upload.mode.new')}
+					</label>
+					<label class="mode">
+						<input type="radio" bind:group={mode} value="append" />
+						{t('upload.mode.append')}
+					</label>
+				</div>
+			{/if}
+			{#if mode === 'append'}
+				<label class="lbl" for="append-target">{t('upload.appendTarget')}</label>
+				<select id="append-target" class="text" bind:value={appendTarget}>
+					{#each visiblePkgs as p (p.id)}
+						<option value={p.id}>{p.name}（{t('upload.appendCount', { count: p.file_count })}）</option>
+					{/each}
+				</select>
+				<p class="hint">{t('upload.appendHint')}</p>
+				<div class="row">
+					<button class="btn primary" disabled={!appendTarget} onclick={confirmUpload}>
+						{t('upload.start')}
+					</button>
+					<button class="btn" onclick={reset}>{t('upload.retry')}</button>
+				</div>
+			{:else}
+				<label class="lbl" for="group-name">{t('upload.groupName')}</label>
+				<input
+					id="group-name"
+					class="text"
+					bind:value={groupName}
+					maxlength="100"
+					placeholder={username}
+				/>
+				<div class="row">
+					<button class="btn primary" disabled={!groupName.trim()} onclick={confirmUpload}>
+						{t('upload.start')}
+					</button>
+					<button class="btn" onclick={reset}>{t('upload.retry')}</button>
+				</div>
+			{/if}
 		{:else if busy}
 			<div class="phase-text">
 				{#if phase === 'parsing'}
 					{t('upload.parsing', { n: progressN, total: progressTotal })}
 				{:else if phase === 'uploading'}
-					{#if progressN < progressTotal || progressTotal === 0}
-						{t('upload.uploading', { n: progressN, total: progressTotal })}
-					{:else}
-						{t('upload.uploadingZip')}
-					{/if}
+					{t('upload.uploading', { n: progressN, total: progressTotal })}
 				{:else}
 					{t('upload.finalizing')}
 				{/if}
@@ -403,7 +461,7 @@
 			<p class="ok">{t('upload.done')}</p>
 			<p class="hint">{t('upload.doneHint')}</p>
 			<div class="row">
-				<button class="btn primary" onclick={() => location.reload()}>{t('upload.viewNow')}</button>
+				<button class="btn primary" onclick={viewNow}>{t('upload.viewNow')}</button>
 				<button class="btn" onclick={reset}>{t('upload.close')}</button>
 			</div>
 		{:else if phase === 'error'}
@@ -571,6 +629,26 @@
 	.text:focus {
 		outline: none;
 		border-color: var(--accent);
+	}
+
+	/* confirm 阶段：新建 / 附加 模式切换 */
+	.mode-row {
+		display: flex;
+		gap: 14px;
+		margin: 4px 0 12px;
+	}
+
+	.mode {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		color: var(--text-dim);
+		font-size: 13px;
+		cursor: pointer;
+	}
+
+	.mode input {
+		accent-color: var(--accent);
 	}
 
 	.btn:disabled {

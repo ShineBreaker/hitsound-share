@@ -1,11 +1,25 @@
 <script lang="ts">
 	// 主页：左树（顶层 = 各包 → 包内文件夹层级）+ 右表（当前选中文件夹的文件）
 	// 数据全部客户端运行时拉取（shell 预渲染只烘壳，不烘数据——config 依赖部署期环境变量，
-	// 树数据需随库更新）；播放用单个 Audio 元素逐个点播
+	// 树数据需随库更新）；播放用单个 Audio 元素逐个点播。
+	// 整包下载 = 按当前内容实时拼 zip（服务端拼包受免费计划 50 子请求限制不可行）：
+	// 拉清单 → 并发直连 R2 拉去重 blob → fflate 流式 STORE 打包 → Blob 保存
 	import { onMount } from 'svelte';
+	import { Zip, ZipDeflate } from 'fflate';
 	import TreeView from '$lib/components/TreeView.svelte';
 	import FileTable from '$lib/components/FileTable.svelte';
-	import { fetchTree, fetchFiles, buildForest, parseNodeKey, type TreePackage } from '$lib/api';
+	import {
+		fetchTree,
+		fetchFiles,
+		fetchMe,
+		fetchZipManifest,
+		buildForest,
+		parseNodeKey,
+		renamePackage,
+		renameFolder,
+		type TreePackage,
+		type Me
+	} from '$lib/api';
 	import { t } from '$lib/i18n';
 	import type { FileRow } from '$lib/types';
 
@@ -19,8 +33,15 @@
 	let treeError = $state(false); // 树加载失败
 	let moreLoading = $state(false); // 「加载更多」请求进行中（防连点重复追加）
 	let pageSeq = 0; // 文件页请求序号：只接受最新请求的响应，防止快速切换文件夹时旧响应后到覆盖
+	let me = $state<Me>({ loggedIn: false }); // 登录态（树节点改名按钮显示）
+	let editingKey = $state(''); // 行内编辑中的树节点 key
 
 	const PAGE_SIZE = 200;
+
+	// 整包下载状态机：idle / packing（x/y）/ error
+	let dlState = $state<'idle' | 'packing' | 'error'>('idle');
+	let dlDone = $state(0);
+	let dlTotal = $state(0);
 
 	// 播放器状态（audio 元素在 onMount 创建，避免 SSR 引用 window）
 	let audio: HTMLAudioElement | null = null;
@@ -100,6 +121,132 @@
 		void loadPage(key, false);
 	}
 
+	/** 并发池：限并发遍历（下载拉取 6 路，兼顾速度与 R2/代理压力） */
+	async function mapPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+		let next = 0;
+		const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+			while (next < items.length) await fn(items[next++]);
+		});
+		await Promise.all(workers);
+	}
+
+	/** 整包下载：清单 → 并发拉取（同 hash 只拉一次，消费完即释放）→ 流式 STORE 打包 → 保存 */
+	async function downloadPackage(): Promise<void> {
+		const pkgId = currentPkgId;
+		if (!pkgId || dlState === 'packing') return;
+		dlState = 'packing';
+		dlDone = 0;
+		try {
+			const manifest = await fetchZipManifest(pkgId);
+			dlTotal = manifest.files.length;
+
+			// 落盘策略：Chromium 走 File System Access 流式写（内存不随包体线性增长）；
+			// 其余浏览器降级内存 Blob（超大包移动端可能吃紧，可接受）
+			let handle: FileSystemFileHandle | null = null;
+			try {
+				handle = await window.showSaveFilePicker({
+					suggestedName: `${manifest.name || 'package'}.zip`,
+					types: [{ description: 'ZIP', accept: { 'application/zip': ['.zip'] } }]
+				});
+			} catch (e) {
+				if (e instanceof DOMException && e.name === 'AbortError') {
+					dlState = 'idle'; // 用户取消保存对话框，不算失败
+					return;
+				}
+				handle = null;
+			}
+			const writable = handle ? await handle.createWritable() : null;
+			const chunks: Uint8Array[] = [];
+			let writeChain = Promise.resolve();
+			const zip = new Zip((err, dat) => {
+				if (err) throw err;
+				if (writable) writeChain = writeChain.then(() => writable.write(dat));
+				else chunks.push(dat);
+			});
+			// hash → 拉取 Promise（去重）+ 剩余引用计数（全部条目消费完即释放缓存）
+			const bufCache = new Map<string, Promise<Uint8Array>>();
+			const remaining = new Map<string, number>();
+			for (const f of manifest.files) remaining.set(f.hash, (remaining.get(f.hash) ?? 0) + 1);
+			const getBuf = (hash: string): Promise<Uint8Array> => {
+				let p = bufCache.get(hash);
+				if (!p) {
+					p = fetch(manifest.urls[hash]).then(async (r) => {
+						if (!r.ok) throw new Error(`HTTP ${r.status}`);
+						return new Uint8Array(await r.arrayBuffer());
+					});
+					bufCache.set(hash, p);
+				}
+				return p;
+			};
+			// 条目乱序写入 zip 是合法的（central directory 记录名字，无顺序要求）
+			await mapPool(manifest.files, 6, async (f) => {
+				const data = await getBuf(f.hash);
+				const entry = new ZipDeflate(f.path, { level: 0 }); // STORE 直通，CPU 仅 crc32
+				zip.add(entry);
+				entry.push(data, true);
+				dlDone += 1;
+				const left = (remaining.get(f.hash) ?? 1) - 1;
+				remaining.set(f.hash, left);
+				if (left === 0) bufCache.delete(f.hash);
+			});
+			zip.end(); // 同步流：返回时 central directory 已收入 chunks/写链
+			if (writable) {
+				await writeChain;
+				await writable.close();
+			} else {
+				const blob = new Blob(chunks as BlobPart[], { type: 'application/zip' });
+				const a = document.createElement('a');
+				a.href = URL.createObjectURL(blob);
+				a.download = `${manifest.name || 'package'}.zip`;
+				a.click();
+				URL.revokeObjectURL(a.href);
+			}
+			dlState = 'idle';
+		} catch {
+			dlState = 'error';
+		}
+	}
+
+	/** 树强制刷新（绕 60s HTTP 缓存；失败保留旧数据） */
+	async function refreshTree(): Promise<void> {
+		try {
+			const res = await fetchTree(true);
+			packages = res.packages;
+			treeLoaded = true;
+		} catch {
+			/* 刷新失败不打断改名流程 */
+		}
+	}
+
+	/**
+	 * 树节点改名提交（大类 = 包名；小类 = 文件夹末级段，父路径保留）。
+	 * 成功后强刷树；包 key 是 id 无需重映射，文件夹改名则重映射选中 key 并重载文件页
+	 */
+	async function submitRename(key: string, newName: string): Promise<boolean> {
+		const { pkg, folder } = parseNodeKey(key);
+		const name = newName.trim();
+		if (!pkg || !name || name.includes('/') || name.includes('\\')) return false;
+		// 改后的文件夹全路径（末级替换）
+		const slash = folder.lastIndexOf('/');
+		const newFolder = folder === '' ? name : slash === -1 ? name : `${folder.slice(0, slash)}/${name}`;
+		try {
+			if (folder === '') await renamePackage(pkg, name);
+			else await renameFolder(pkg, folder, newFolder);
+		} catch {
+			return false;
+		}
+		const prev = selected;
+		await refreshTree();
+		if (folder !== '') {
+			const oldKey = `pkg:${pkg}/${folder}`;
+			if (prev === oldKey || prev.startsWith(`${oldKey}/`)) {
+				selected = `pkg:${pkg}/${newFolder}${prev.slice(oldKey.length)}`;
+				void loadPage(selected, false);
+			}
+		}
+		return true;
+	}
+
 	/** 点行：未播→播、播放中→暂停、暂停→继续 */
 	function togglePlay(file: FileRow): void {
 		if (!audio) return;
@@ -158,6 +305,8 @@
 
 		// 初始加载树并默认选中第一个包（失败可经树面板重试按钮重走本流程）
 		void initTree();
+		// 登录态：树节点改名按钮的显示判定（失败按未登录处理）
+		void fetchMe().then((m) => (me = m));
 	});
 </script>
 
@@ -175,9 +324,16 @@
 			{:else if forest.length === 0}
 				<div class="hint">{t('tree.empty')}</div>
 			{:else}
-				{#each forest as node (node.key)}
-					<TreeView {node} {selected} onselect={select} />
-				{/each}
+			{#each forest as node (node.key)}
+				<TreeView
+					{node}
+					{selected}
+					{me}
+					bind:editingKey
+					onselect={select}
+					onsubmit={submitRename}
+				/>
+			{/each}
 			{/if}
 		</nav>
 	</aside>
@@ -193,9 +349,20 @@
 				{/each}
 			</nav>
 			{#if currentPkgId && packages.length > 0}
-				<a class="btn" href={`/p/${encodeURIComponent(currentPkgId)}/download`}>
-					{t('action.downloadPackage')}
-				</a>
+				{#if dlState === 'packing'}
+					<button class="btn" disabled>
+						{t('download.packaging', { n: dlDone, total: dlTotal })}
+					</button>
+				{:else}
+					<button
+						class="btn"
+						class:err={dlState === 'error'}
+						title={dlState === 'error' ? t('download.failedHint') : ''}
+						onclick={() => void downloadPackage()}
+					>
+						{dlState === 'error' ? t('download.failedRetry') : t('action.downloadPackage')}
+					</button>
+				{/if}
 			{/if}
 		</div>
 
@@ -350,6 +517,11 @@
 	.btn:disabled {
 		opacity: 0.55;
 		cursor: default;
+	}
+	/* 打包失败：按钮变红提示，点击即重试 */
+	.btn.err {
+		border-color: var(--accent-pink);
+		background: var(--accent-pink);
 	}
 
 	.files-body {

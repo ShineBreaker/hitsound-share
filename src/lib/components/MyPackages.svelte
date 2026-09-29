@@ -88,7 +88,7 @@
 									{p.status === 'visible' ? t('my.status.visible') : t('my.status.pending')}
 								</span>
 								{t('my.fileCount', { count: p.file_count })}
-								· {fmtSize(p.size_bytes)}
+								· {fmtSize(p.logical_size)}
 								· {p.created_at}
 							</span>
 						</div>

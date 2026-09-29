@@ -14,7 +14,6 @@ export const MIME_BY_EXT: Record<AudioExt, string> = {
 // 防滥用上限（按真实素材校准：lasse 库 497MB/2429 文件）
 export const MAX_ENTRIES = 5000;
 export const MAX_AUDIO_BYTES = 1024 * 1024 * 1024; // 单包音频累计 ≤1GB
-export const MAX_ZIP_BYTES = 500 * 1024 * 1024; // 上传 zip ≤500MB（实际大包约 300MB，2026-09 从 100MB 放开）
 export const GLOBAL_CAP_BYTES = 8 * 1024 * 1024 * 1024; // 全局水位 ≥8GB 拒新上传
 export const PKGS_PER_DAY = 5; // 每用户 5 包/天
 export const PENDING_TTL_H = 24; // pending 懒清理阈值
@@ -32,8 +31,8 @@ export interface ManifestEntry {
 }
 
 export interface Manifest {
-	name: string;
-	zipSize: number;
+	name: string; // 新建模式的包名；附加模式取目标包名（此字段被忽略）
+	appendTo: string | null; // 附加到现有包的 id（uuid）；null = 新建包
 	entries: ManifestEntry[];
 }
 
@@ -50,16 +49,20 @@ function intOrNull(v: unknown, min: number, max: number): number | null {
 /**
  * manifest 强校验：条目数、路径安全（拒 ..、绝对路径、反斜杠）、扩展名白名单、
  * hash 形态（防注入 R2 key）、元数据范围、音频累计大小。
+ * appendTo（可选）为 uuid 形态；附加模式下 name 由服务端取目标包名，不校验。
  * 不通过返回中文原因码（前端映射文案）
  */
 export function validateManifest(body: unknown): Validated<Manifest> {
 	if (typeof body !== 'object' || body === null) return { ok: false, error: 'bad_body' };
 	const b = body as Record<string, unknown>;
-	if (typeof b.name !== 'string' || b.name.length < 1 || b.name.length > 100) {
-		return { ok: false, error: 'bad_name' };
+	const appendTo =
+		typeof b.appendTo === 'string' ? b.appendTo : typeof b.appendTo === 'undefined' ? null : undefined;
+	if (appendTo === undefined) return { ok: false, error: 'bad_append_to' };
+	if (appendTo !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(appendTo)) {
+		return { ok: false, error: 'bad_append_to' };
 	}
-	if (!isFiniteNum(b.zipSize) || b.zipSize <= 0 || b.zipSize > MAX_ZIP_BYTES) {
-		return { ok: false, error: 'bad_zip_size' };
+	if (appendTo === null && (typeof b.name !== 'string' || b.name.length < 1 || b.name.length > 100)) {
+		return { ok: false, error: 'bad_name' };
 	}
 	if (!Array.isArray(b.entries) || b.entries.length === 0 || b.entries.length > MAX_ENTRIES) {
 		return { ok: false, error: 'too_many_entries' };
@@ -114,11 +117,14 @@ export function validateManifest(body: unknown): Validated<Manifest> {
 			peaks
 		});
 	}
-	return { ok: true, value: { name: b.name, zipSize: b.zipSize, entries } };
+	return { ok: true, value: { name: typeof b.name === 'string' ? b.name : '', appendTo, entries } };
 }
 
+/** 预签名所需的 R2 三项（getSecrets 的子集，凑齐即可签名，不要求上传链路全套） */
+export type R2Secrets = Pick<Secrets, 'R2_ACCOUNT_ID' | 'R2_ACCESS_KEY_ID' | 'R2_SECRET_ACCESS_KEY'>;
+
 /** 生成 R2 S3 预签名 PUT URL（aws4fetch，SigV4 query 签名，限时 10 分钟） */
-export async function presignPut(secrets: Secrets, key: string, expiresS = 600): Promise<string> {
+export async function presignPut(secrets: R2Secrets, key: string, expiresS = 600): Promise<string> {
 	const client = new AwsClient({
 		accessKeyId: secrets.R2_ACCESS_KEY_ID,
 		secretAccessKey: secrets.R2_SECRET_ACCESS_KEY,
@@ -130,6 +136,21 @@ export async function presignPut(secrets: Secrets, key: string, expiresS = 600):
 		`https://${secrets.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/hitsound-files/${key}?X-Amz-Expires=${expiresS}`
 	);
 	const req = await client.sign(url.toString(), { method: 'PUT', aws: { signQuery: true } });
+	return req.url;
+}
+
+/** 生成 R2 S3 预签名 GET URL（整包下载的浏览器直连拉取；大包耗时长，默认 1 小时） */
+export async function presignGet(secrets: R2Secrets, key: string, expiresS = 3600): Promise<string> {
+	const client = new AwsClient({
+		accessKeyId: secrets.R2_ACCESS_KEY_ID,
+		secretAccessKey: secrets.R2_SECRET_ACCESS_KEY,
+		service: 's3',
+		region: 'auto'
+	});
+	const url = new URL(
+		`https://${secrets.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/hitsound-files/${key}?X-Amz-Expires=${expiresS}`
+	);
+	const req = await client.sign(url.toString(), { method: 'GET', aws: { signQuery: true } });
 	return req.url;
 }
 

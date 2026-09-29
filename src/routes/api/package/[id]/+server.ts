@@ -1,29 +1,31 @@
-// DELETE /api/package/<id>：上传者删自己的包 / 管理员删任意（ADMIN_OSU_ID）。
-// D1：decrement refcount → 删包（级联 files）→ 清归零 blobs 行；R2：删归零 blob + zip
+// /api/package/<id>：包治理——PATCH 改名 / DELETE 删除（上传者本人的包 / 管理员任意，ADMIN_OSU_ID）。
+// DELETE：D1：decrement refcount → 删包（级联 files）→ 清归零 blobs 行；R2：删归零 blob + zip
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getEnv } from '$lib/server/media';
-import { getSecrets, isAdmin } from '$lib/server/env';
-import { verifySession, SESSION_COOKIE } from '$lib/server/session';
-import { getPackage, purgePackage } from '$lib/server/packages';
+import { requirePackageOwner, purgePackage } from '$lib/server/packages';
+
+/** PATCH：包改名（大类改名）。影子 pending 包不可改名（其名称随合并丢弃） */
+export const PATCH: RequestHandler = async ({ params, request, platform, cookies }) => {
+	const guard = await requirePackageOwner(platform, cookies, params.id);
+	if ('error' in guard) return json({ error: guard.error }, { status: guard.status });
+
+	const body = (await request.json().catch(() => null)) as { name?: unknown } | null;
+	if (typeof body?.name !== 'string' || body.name.length < 1 || body.name.length > 100) {
+		return json({ error: 'bad_name' }, { status: 400 });
+	}
+	if (guard.pkg.append_to !== null) return json({ error: 'appending_in_progress' }, { status: 400 });
+
+	await guard.env.DB.prepare('UPDATE packages SET name = ?1 WHERE id = ?2')
+		.bind(body.name, guard.pkg.id)
+		.run();
+	return json({ ok: true });
+};
 
 export const DELETE: RequestHandler = async ({ params, platform, cookies }) => {
-	const env = getEnv(platform);
-	const secrets = getSecrets(platform);
-	if (!env || !secrets.SESSION_SECRET) return json({ error: 'service_unavailable' }, { status: 503 });
+	const guard = await requirePackageOwner(platform, cookies, params.id);
+	if ('error' in guard) return json({ error: guard.error }, { status: guard.status });
 
-	const session = await verifySession(cookies.get(SESSION_COOKIE), secrets.SESSION_SECRET);
-	if (!session) return json({ error: 'not_logged_in' }, { status: 401 });
-
-	const pkg = await getPackage(env.DB, params.id);
-	if (!pkg) return json({ error: 'not_found' }, { status: 404 });
-
-	// 权限：上传者本人；或管理员；系统导入（uploader NULL）仅管理员
-	const owner = pkg.uploader_osu_id === session.osuId;
-	const admin = isAdmin(secrets, session.osuId);
-	if (!owner && !admin) return json({ error: 'forbidden' }, { status: 403 });
-
-	const result = await purgePackage(env, pkg.id);
+	const result = await purgePackage(guard.env, guard.pkg.id);
 	if (!result.ok) return json({ error: result.error }, { status: 500 });
 	return json({ ok: true });
 };

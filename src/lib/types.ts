@@ -20,4 +20,12 @@ export interface TreeNode {
 	key: string; // 选中键：包 'pkg:<id>'，文件夹 'pkg:<id>/<folderPath>'
 	isPackage: boolean;
 	children: TreeNode[];
+	ownerOsuId: number | null; // 所属包上传者（各节点冗余携带，改名按钮显示用）
+}
+
+/** 整包下载清单（/api/package/<id>/zip）：当前 files 全列 + 去重 hash 的拉取 URL */
+export interface ZipManifest {
+	name: string;
+	files: Array<{ path: string; hash: string; ext: string; size: number }>;
+	urls: Record<string, string>;
 }

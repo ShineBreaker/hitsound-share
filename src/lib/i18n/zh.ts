@@ -12,6 +12,8 @@ const zh = {
 	// 目录树面板
 	'tree.title': '音效库',
 	'tree.empty': '暂无内容',
+	'tree.expand': '展开',
+	'tree.collapse': '折叠',
 
 	// 文件表列头
 	'file.name': '文件名',
@@ -34,6 +36,13 @@ const zh = {
 	'action.download': '下载',
 	'action.downloadPackage': '下载整包',
 	'action.retry': '重试',
+	'action.rename': '重命名',
+	'rename.failed': '改名失败，请重试（可能名称无效或网络问题）',
+
+	// 整包下载（浏览器按当前内容实时打包）
+	'download.packaging': '打包中 {n}/{total}…',
+	'download.failedRetry': '下载失败，重试',
+	'download.failedHint': '打包中断（网络错误等），点击重新打包',
 
 	// 错误
 	'error.load': '加载失败',
@@ -46,12 +55,17 @@ const zh = {
 	// 上传对话框
 	'upload.title': '上传音效',
 	'upload.pick': '选择 zip 或音频文件',
-	'upload.hint': '支持 zip 整包或单个 wav / ogg / mp3 文件（≤500MB），zip 内非音频文件会被跳过',
+	'upload.hint': '支持 zip 整包或单个 wav / ogg / mp3 文件，zip 内非音频文件会被跳过（音频累计 ≤1GB）',
 	'upload.groupName': '分组名称',
 	'upload.start': '开始上传',
+	'upload.mode.label': '上传方式',
+	'upload.mode.new': '新建分组',
+	'upload.mode.append': '附加到现有分组',
+	'upload.appendTarget': '选择分组',
+	'upload.appendCount': '{count} 个文件',
+	'upload.appendHint': '文件将并入所选分组，整包下载自动包含其全部内容',
 	'upload.parsing': '正在解析 {n}/{total} 个文件…',
 	'upload.uploading': '正在上传 {n}/{total} 个文件…',
-	'upload.uploadingZip': '正在完成上传…',
 	'upload.finalizing': '正在核验入库…',
 	'upload.done': '上传完成！',
 	'upload.doneHint': '点击下方按钮刷新页面查看',
@@ -69,7 +83,11 @@ const zh = {
 	// 上传错误码 → 中文
 	'upload.err.bad_body': '请求数据无效',
 	'upload.err.bad_name': '包名无效（1-100 字符）',
-	'upload.err.bad_zip_size': '文件大小超出限制（≤500MB）',
+	'upload.err.bad_append_to': '附加目标无效',
+	'upload.err.append_target_not_found': '目标分组不存在或无权附加',
+	'upload.err.append_target_invalid': '目标分组当前不可附加，请稍后再试',
+	'upload.err.appending_in_progress': '该分组有待完成的上传，请稍后再试',
+	'upload.err.append_gone': '无法确认附加结果，请刷新页面查看；若未生效请重试',
 	'upload.err.too_many_entries': '文件数超出限制（≤5000）',
 	'upload.err.too_large': '音频总大小超出限制（≤1GB）',
 	'upload.err.bad_path': '存在非法路径的文件',
@@ -85,9 +103,7 @@ const zh = {
 	'upload.err.manifest_failed': '提交清单失败，请重试',
 	'upload.err.put_failed': '文件传输失败，请重试',
 	'upload.err.blob_mismatch': '部分文件校验不一致，请重新上传',
-	'upload.err.zip_missing': '文件未收到，请重试',
-	'upload.err.zip_mismatch': '文件校验不一致，请重试',
-	'upload.err.zip_too_large': '文件实际大小超出限制（≤500MB）',
+	'upload.err.package_not_found': '分组不存在或无权访问',
 	'upload.err.network': '网络错误，请重试',
 
 	// 我的上传

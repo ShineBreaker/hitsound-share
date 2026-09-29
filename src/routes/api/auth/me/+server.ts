@@ -1,7 +1,7 @@
 // /api/auth/me：当前登录态（顶栏显示用；不暴露 cookie 内容本身）
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSecrets } from '$lib/server/env';
+import { getSecrets, isAdmin } from '$lib/server/env';
 import { verifySession, SESSION_COOKIE } from '$lib/server/session';
 
 export const GET: RequestHandler = async ({ cookies, platform }) => {
@@ -15,6 +15,7 @@ export const GET: RequestHandler = async ({ cookies, platform }) => {
 		loggedIn: true,
 		username: user.username,
 		avatarUrl: user.avatarUrl,
-		osuId: user.osuId
+		osuId: user.osuId,
+		isAdmin: isAdmin(secrets, user.osuId) // 树/包上改名按钮的显示依据
 	});
 };
