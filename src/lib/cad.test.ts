@@ -27,8 +27,9 @@ describe('Cad', () => {
 
 		ready(cad);
 		await tick();
-		expect(sent).toHaveLength(1);
-		expect(sent[0]).toMatchObject({ type: 'hs:load' });
+		// sent = [vol music, vol effects, hs:load]
+		expect(sent.at(-1)).toMatchObject({ type: 'hs:load' });
+		expect(sent.filter(m => (m as { type: string }).type === 'hs:load')).toHaveLength(1);
 	});
 
 	it('就绪后的改动走 hs:update（热更新，不整页重载）', async () => {
@@ -36,12 +37,11 @@ describe('Cad', () => {
 		cad.openPreview();
 		ready(cad);
 		await tick();
-		expect(sent[0]).toMatchObject({ type: 'hs:load' });
+		expect(sent.at(-1)).toMatchObject({ type: 'hs:load' });
 
 		cad.invalidate();
 		await tick();
-		expect(sent).toHaveLength(2);
-		expect(sent[1]).toMatchObject({ type: 'hs:update' });
+		expect(sent.at(-1)).toMatchObject({ type: 'hs:update' });
 	});
 
 	it('构建期间的连续改动合并为一次推送（dirty 归并）', async () => {
@@ -56,9 +56,8 @@ describe('Cad', () => {
 		cad.invalidate();
 		cad.invalidate();
 		await tick();
-		expect(sent).toHaveLength(3);
-		expect(sent[1]).toMatchObject({ type: 'hs:update' });
-		expect(sent[2]).toMatchObject({ type: 'hs:update' });
+		const updates = sent.filter(m => (m as { type: string }).type === 'hs:update');
+		expect(updates).toHaveLength(2);
 	});
 
 	it('buildBytes 变慢时的 dirty 仍被循环消化', async () => {
@@ -96,7 +95,9 @@ describe('Cad', () => {
 				duration: 60000,
 				objects: 5,
 				hasAudio: true,
-				beatmapFile: 'a.osu'
+				beatmapFile: 'a.osu',
+				difficulties: ['V'],
+				difficultyIndex: 0
 			}
 		});
 		expect(cad.loaded).toBe(true);
@@ -115,7 +116,7 @@ describe('Cad', () => {
 		cad.openPreview();
 		ready(cad);
 		await tick();
-		expect(sent).toHaveLength(1);
+		expect(sent.at(-1)).toMatchObject({ type: 'hs:load' });
 
 		cad.close();
 		expect(cad.open).toBe(false);
@@ -126,8 +127,65 @@ describe('Cad', () => {
 		cad.openPreview();
 		ready(cad);
 		await tick();
-		expect(sent).toHaveLength(2);
-		expect(sent[1]).toMatchObject({ type: 'hs:load' }); // 新引擎重新 load
+		const loads = sent.filter(m => (m as { type: string }).type === 'hs:load');
+		expect(loads).toHaveLength(2); // 新引擎重新 load
+	});
+
+	it('音量按声道推送并在 ready 时恢复持久化值', async () => {
+		const { cad, sent } = setup();
+		cad.openPreview();
+		ready(cad);
+		await tick();
+
+		// ready 时两声道各推一次（默认值 1）
+		const vols = sent.filter(
+			m => (m as { action?: string }).action === 'volume'
+		);
+		expect(vols).toHaveLength(2);
+		expect(vols).toContainEqual(expect.objectContaining({ channel: 'music', value: 1 }));
+		expect(vols).toContainEqual(expect.objectContaining({ channel: 'effects', value: 1 }));
+
+		cad.setVolume('effects', 0.4);
+		expect(cad.volEffects).toBe(0.4);
+		expect(sent.at(-1)).toMatchObject({
+			type: 'hs:control',
+			action: 'volume',
+			channel: 'effects',
+			value: 0.4
+		});
+	});
+
+	it('选择难度推送 difficulty，ready 前只记忆不发送', async () => {
+		const { cad, sent } = setup();
+		cad.selectDifficulty(2); // 未就绪：只记录
+		expect(sent).toHaveLength(0);
+
+		cad.openPreview();
+		ready(cad);
+		await tick();
+
+		sent.length = 0;
+		cad.selectDifficulty(1);
+		expect(sent[0]).toMatchObject({
+			type: 'hs:control',
+			action: 'difficulty',
+			value: 1
+		});
+
+		// 已装载难度与期望不符时自动重发
+		cad.onMessage({
+			type: 'cad:loaded',
+			meta: {
+				title: 'T', artist: 'A', version: 'V', creator: 'C',
+				duration: 1, objects: 1, hasAudio: true, beatmapFile: 'a.osu',
+				difficulties: ['E', 'N', 'H'], difficultyIndex: 0
+			}
+		});
+		expect(sent.at(-1)).toMatchObject({
+			type: 'hs:control',
+			action: 'difficulty',
+			value: 1
+		});
 	});
 
 	it('无内容时不推送（hasContent=false）', async () => {

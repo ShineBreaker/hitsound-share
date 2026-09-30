@@ -124,11 +124,48 @@
 			class="collapse"
 			title={t('cad.close')}
 			aria-label={t('cad.close')}
-			onclick={cad.close}
+			onclick={() => cad.close()}
 		>
 			×
 		</button>
 	</div>
+	{#if cad.loaded && cad.meta}
+		<div class="cad-sub">
+			{#if cad.meta.difficulties.length > 1}
+				<select
+					class="diff"
+					aria-label={t('cad.difficulty')}
+					title={t('cad.difficulty')}
+					value={cad.meta.difficultyIndex}
+					onchange={e => cad.selectDifficulty(Number(e.currentTarget.value))}
+				>
+					{#each cad.meta.difficulties as d, i (i)}
+						<option value={i}>{d}</option>
+					{/each}
+				</select>
+			{/if}
+			<label class="vol">
+				<span>{t('cad.music')}</span>
+				<input
+					type="range"
+					min="0"
+					max="100"
+					value={Math.round(cad.volMusic * 100)}
+					oninput={e => cad.setVolume('music', Number(e.currentTarget.value) / 100)}
+				/>
+			</label>
+			<label class="vol">
+				<span>{t('cad.effects')}</span>
+				<input
+					type="range"
+					min="0"
+					max="100"
+					value={Math.round(cad.volEffects * 100)}
+					oninput={e => cad.setVolume('effects', Number(e.currentTarget.value) / 100)}
+				/>
+			</label>
+		</div>
+	{/if}
 	<div class="cad-body">
 		<iframe
 			bind:this={frame}
@@ -244,6 +281,41 @@
 	.collapse:hover {
 		color: var(--text);
 		background: var(--bg-l3);
+	}
+
+	/* 第二行：难度选择 + 音乐/音效音量 */
+	.cad-sub {
+		flex: none;
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 2px 10px;
+		min-height: 26px;
+		border-bottom: 1px solid color-mix(in srgb, var(--bg-l3) 55%, transparent);
+	}
+	.diff {
+		flex: 0 1 auto;
+		min-width: 0;
+		max-width: 45%;
+		padding: 1px 4px;
+		border: 1px solid var(--bg-l3);
+		border-radius: var(--radius);
+		background: var(--bg-l1);
+		color: var(--text-dim);
+		font-size: 11px;
+		font-family: inherit;
+	}
+	.vol {
+		flex: none;
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		font-size: 11px;
+		color: var(--text-faint);
+	}
+	.vol input[type='range'] {
+		width: 84px;
+		accent-color: var(--accent);
 	}
 
 	.cad-body {

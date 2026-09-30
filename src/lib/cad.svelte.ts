@@ -17,16 +17,16 @@ export interface CadMeta {
 	objects: number;
 	hasAudio: boolean;
 	beatmapFile: string;
+	difficulties: string[];
+	difficultyIndex: number;
 }
 
 type ToPreview =
 	| { type: 'hs:load'; name: string; bytes: ArrayBuffer }
 	| { type: 'hs:update'; name: string; bytes: ArrayBuffer }
-	| {
-			type: 'hs:control';
-			action: 'play' | 'pause' | 'seek' | 'volume' | 'stats';
-			value?: number;
-	  };
+	| { type: 'hs:control'; action: 'play' | 'pause' | 'seek' | 'stats'; value?: number }
+	| { type: 'hs:control'; action: 'volume'; channel: 'music' | 'effects'; value: number }
+	| { type: 'hs:control'; action: 'difficulty'; value: number };
 
 type ToParent =
 	| { type: 'cad:ready' }
@@ -68,6 +68,11 @@ export class Cad {
 	playing = $state(false);
 	error = $state('');
 
+	/** 音乐音量 0–1（音轨 mixer），localStorage 持久化 */
+	volMusic = $state(readVolume('cad.vol.music'));
+	/** 音效音量 0–1（采样 mixer），localStorage 持久化 */
+	volEffects = $state(readVolume('cad.vol.effects'));
+
 	/** 组件绑定的 iframe 元素（postMessage 目标；非响应式） */
 	frame: HTMLIFrameElement | null = null;
 
@@ -75,6 +80,7 @@ export class Cad {
 	#dirty = false; // 有待推送的包内容
 	#pushing = false; // flush 进行中（新 invalidate 合并进循环）
 	#sent = 0; // 已推送包数：0 → 下一条 hs:load，否则 hs:update
+	#wantedDifficulty: number | null = null; // 用户选过的难度下标，重开后按此恢复
 
 	constructor(deps: CadDeps) {
 		this.#deps = deps;
@@ -136,12 +142,26 @@ export class Cad {
 		switch (data.type) {
 			case 'cad:ready':
 				this.ready = true;
-				void this.#flush();
+				if (this.open) {
+					// iframe 每次打开都是新引擎——把持久化的音量推过去
+					this.#sendVolume('music');
+					this.#sendVolume('effects');
+					void this.#flush();
+				}
 				break;
 			case 'cad:loaded':
 				this.loaded = true;
 				this.meta = data.meta;
 				this.error = '';
+				// 重开/热更新后恢复用户之前选的难度（iframe 按路径保持，
+				// 但谱面集换掉或全新引擎时下标可能漂移）
+				if (
+					this.#wantedDifficulty !== null &&
+					data.meta.difficultyIndex !== this.#wantedDifficulty &&
+					this.#wantedDifficulty < data.meta.difficulties.length
+				) {
+					this.selectDifficulty(this.#wantedDifficulty);
+				}
 				break;
 			case 'cad:time':
 				this.time = data.time;
@@ -156,9 +176,44 @@ export class Cad {
 		}
 	}
 
-	control(action: 'play' | 'pause' | 'seek' | 'volume', value?: number): void {
+	control(action: 'play' | 'pause' | 'seek' | 'stats', value?: number): void {
 		if (!this.ready) return;
 		this.#deps.send({ type: 'hs:control', action, value });
+	}
+
+	#sendVolume(channel: 'music' | 'effects'): void {
+		if (!this.ready) return;
+		const value = channel === 'music' ? this.volMusic : this.volEffects;
+		this.#deps.send({ type: 'hs:control', action: 'volume', channel, value });
+	}
+
+	/** 音量 0–1；写状态 + 持久化 + 立即推给 iframe */
+	setVolume(channel: 'music' | 'effects', value: number): void {
+		const v = Math.min(1, Math.max(0, value));
+		if (channel === 'music') this.volMusic = v;
+		else this.volEffects = v;
+		try {
+			localStorage.setItem(`cad.vol.${channel}`, String(v));
+		} catch {
+			/* 隐私模式等场景忽略 */
+		}
+		this.#sendVolume(channel);
+	}
+
+	/** 切换难度（谱面集内 .osu 下标）；iframe 内热更新不改选择的难度 */
+	selectDifficulty(index: number): void {
+		this.#wantedDifficulty = index;
+		if (!this.ready) return;
+		this.#deps.send({ type: 'hs:control', action: 'difficulty', value: index });
+	}
+}
+
+function readVolume(key: string): number {
+	try {
+		const v = Number(localStorage.getItem(key));
+		return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 1;
+	} catch {
+		return 1;
 	}
 }
 

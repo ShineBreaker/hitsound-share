@@ -90,6 +90,9 @@ const zh = {
 	'cad.noAudio': '此谱面无音轨',
 	'cad.seek': '进度',
 	'cad.close': '关闭预览',
+	'cad.difficulty': '难度',
+	'cad.music': '音乐',
+	'cad.effects': '音效',
 
 	// 多选
 	'sel.bar': '已选 {count} 个 · 按 Q–V 或点击组装面板格子加入',

@@ -55,14 +55,21 @@ SliderTickRate:1
 [TimingPoints]
 0,500,4,1,0,80,1,0
 
+[Colours]
+Combo1 : 255,80,140
+
 [HitObjects]
 256,192,1000,1,0,0:0:0:0:
 300,192,1600,1,2,0:0:0:0:
 340,220,2200,1,8,0:0:0:0:
 256,300,2800,1,10,0:0:0:0:
 `;
+  // 第二个难度（Insane）：物件时刻不同，用于验证难度切换
+  const osu2 = osu.replace("Version:Hard", "Version:Insane")
+    .replace("[HitObjects]", "[HitObjects]\n128,128,800,1,0,0:0:0:0:");
   return zipSync({
     "test-map.osu": enc.encode(osu),
+    "test-map2.osu": enc.encode(osu2),
     "song.wav": wav(220, 5000),
     "normal-hitnormal.wav": wav(hitFreq, ms),
   });
@@ -170,6 +177,69 @@ console.log("ready:", await waitMsg("cad:ready"));
 console.log("wait cad:loaded…");
 const loaded = await waitMsg("cad:loaded", 30000);
 console.log("loaded:", JSON.stringify(loaded.meta));
+if ((loaded.meta?.difficulties?.length ?? 0) !== 2)
+  throw new Error(`难度列表应为 2（实际 ${JSON.stringify(loaded.meta?.difficulties)}）`);
+
+// 控制条 UI：难度 select + 两个音量 slider
+const subUi = await evalJs(`({
+  diff: document.querySelector(".cad-sub .diff")?.options.length ?? 0,
+  vols: document.querySelectorAll(".cad-sub .vol input").length,
+})`);
+console.log("sub ui:", JSON.stringify(subUi));
+if (subUi.diff !== 2 || subUi.vols !== 2) throw new Error("难度/音量控件未渲染");
+
+// 音量：拖「音乐」到 30 → iframe 内 trackMixer.volume 应变 0.3
+await evalJs(`(() => {
+  const el = document.querySelector(".cad-sub .vol input");
+  el.value = 30; el.dispatchEvent(new Event("input", { bubbles: true }));
+})()`);
+await new Promise(r => setTimeout(r, 400));
+const trackVol = await evalJs(`document.querySelector(".cad-win iframe").contentWindow.__game?.audioManager.trackMixer.volume.value`);
+console.log("trackMixer vol:", trackVol);
+if (Math.abs(trackVol - 0.3) > 0.01) throw new Error(`trackMixer 音量未生效（${trackVol}）`);
+
+// 难度切换：UI select 选 Insane → 第二个 cad:loaded，difficultyIndex=1
+const nd = await evalJs(`window.__msgs.length`);
+await evalJs(`(() => {
+  const el = document.querySelector(".cad-sub .diff");
+  el.value = "1"; el.dispatchEvent(new Event("change", { bubbles: true }));
+})()`);
+const loadedDiff = await waitMsg("cad:loaded", 15000, nd);
+console.log("loaded(diff):", JSON.stringify(loadedDiff.meta));
+if (loadedDiff.meta?.difficultyIndex !== 1 || loadedDiff.meta?.version !== "Insane")
+  throw new Error("难度切换未生效");
+
+// combo 颜色：seek 到有圈体渲染的时刻暂停（Insane 物件 800/1000/1600/2200/2800ms，
+// t≈1900 时第 3、4 个圈可见），截 iframe 区域回灌解码数粉像素（Combo1=255,80,140）
+await evalJs(`document.querySelector(".cad-win iframe").contentWindow.postMessage({ type: "hs:control", action: "seek", value: 1900 }, "*")`);
+await new Promise(r => setTimeout(r, 600));
+const clip = await evalJs(`(() => {
+  const r = document.querySelector(".cad-win iframe").getBoundingClientRect();
+  return { x: r.x, y: r.y, width: r.width, height: r.height, scale: 2 };
+})()`);
+const skinShot = await send("Page.captureScreenshot", { format: "png", clip });
+if (!skinShot.result?.data) throw new Error(`截图失败: ${JSON.stringify(skinShot).slice(0, 300)}`);
+writeFileSync("/tmp/cad-shots/e2e-playfield.png", Buffer.from(skinShot.result.data, "base64"));
+const pinkN = await evalJs(`(async () => {
+  const bin = atob(${JSON.stringify(skinShot.result.data)});
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const img = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+  const c = document.createElement("canvas");
+  c.width = img.width; c.height = img.height;
+  const ctx = c.getContext("2d");
+  ctx.drawImage(img, 0, 0);
+  const d = ctx.getImageData(0, 0, c.width, c.height).data;
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4)
+    if (d[i] > 170 && d[i + 2] > 90 && d[i + 1] < 140) n++;
+  return n;
+})()`);
+console.log("pink px:", pinkN);
+if (pinkN <= 0) {
+  console.log("console tail:", JSON.stringify(consoleLogs.slice(-15), null, 0));
+  throw new Error("combo 颜色未染色圈体（无粉色像素）");
+}
 
 // 点播放 → cad:time 推进
 await evalJs(`document.querySelector(".cad-win .pp").click()`);
@@ -219,6 +289,18 @@ console.log("stats#2:", JSON.stringify(stats2));
 const hitsBefore = stats[0]?.hits ?? 0;
 if (!stats2.length || stats2[0].hits <= hitsBefore)
   throw new Error("热更新后 hitsound 未继续命中（stale skin？）");
+
+// 关闭按钮：点击后悬浮窗卸载；重开后是新引擎（再收到 cad:ready/cad:loaded）
+await evalJs(`document.querySelector(".cad-win .collapse").click()`);
+await new Promise(r => setTimeout(r, 400));
+if (await evalJs(`!!document.querySelector(".cad-win")`))
+  throw new Error("关闭按钮无效：cad-win 未卸载");
+
+const nReopen = await evalJs(`window.__msgs.length`);
+await evalJs(`[...document.querySelectorAll(".osz-bar .btn")].find(b => b.textContent.includes("预览")).click()`);
+await waitMsg("cad:ready", 15000, nReopen);
+const loaded3 = await waitMsg("cad:loaded", 30000, nReopen);
+console.log("loaded(reopen):", JSON.stringify(loaded3.meta));
 
 console.log("errors:", JSON.stringify(await evalJs(`(window.__msgs||[]).filter(m => m.type === "cad:error")`)));
 console.log("pageErrs:", JSON.stringify(await evalJs(`window.__errs||[]`)));
