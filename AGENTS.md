@@ -8,7 +8,8 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 ## 常用命令
 
-- `pnpm dev` / `pnpm build` / `pnpm preview`；`pnpm test`（vitest，`src/**/*.test.ts`）——改动后 `pnpm test` 与 `pnpm build` 都须通过；无 lint 脚本
+- `just` / `just --list`：全部常用命令的封装（justfile），一键流程见下；装依赖仍是 `pnpm install`
+- `pnpm dev` / `pnpm build` / `pnpm preview`；`pnpm test`（vitest，`src/**/*.test.ts`）——改动后 `pnpm test` 与 `pnpm build` 都须通过（一条命令：`just verify`）；无 lint 脚本
 - `wrangler d1 execute hitsound-share-db --local --file schema.sql`：初始化本地 D1 模拟库；`--command "SQL"` 单条执行（线上操作用 `--remote`）
 - `wrangler pages dev .svelte-kit/cloudflare --port 8799 -b KEY=VALUE…`：用构建产物起本地 Functions（bindings 从 wrangler.toml 读，env 变量用 `-b` 传）
 - `wrangler r2 object put/get/list hitsound-files/<key> --local/--remote`：R2 对象操作（不加 `--local` 的默认仍是本地，**线上必须显式 `--remote`**）

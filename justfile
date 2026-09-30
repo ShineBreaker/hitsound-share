@@ -1,0 +1,91 @@
+# hitsound-share 常用命令封装 —— `just` 或 `just --list` 列出全部
+# 约定与细节见 AGENTS.md / docs/osucad.md / docs/deployment.md
+
+# 首次进入：装依赖 + 初始化 osucad 子模块 + 初始化本地 D1
+setup:
+    pnpm install
+    git submodule update --init vendor/osucad
+    @just db-init
+
+# ── 日常 ────────────────────────────────────────────
+
+# vite dev server（浏览/试听/打包/osz 预览）
+dev:
+    pnpm dev
+
+# vitest 单测（可带过滤参数：just test src/lib/kit.test.ts）
+test *ARGS:
+    pnpm test {{ ARGS }}
+
+# Pages 构建产物（.svelte-kit/cloudflare）
+build:
+    pnpm build
+
+# vite preview 预览构建产物
+preview:
+    pnpm preview
+
+# 提交前门禁：单测 + 构建全绿
+verify: test build
+
+# 初始化/重置本地 D1 模拟库（schema.sql）
+db-init:
+    wrangler d1 execute hitsound-share-db --local --file schema.sql
+
+# 用构建产物起本地 Functions（临时目录 + 假密钥，隔离真实 .env——见 AGENTS.md 已知坑）
+pages-dev: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+    cp wrangler.toml "$TMP/"
+    cd "$TMP"
+    wrangler pages dev "{{ justfile_directory() }}/.svelte-kit/cloudflare" --port 8799 \
+      --persist-to "$TMP/state" \
+      -b OSU_CLIENT_ID=dev -b OSU_CLIENT_SECRET=dev \
+      -b SESSION_SECRET=dev-secret-0123456789abcdef01234567 \
+      -b ADMIN_OSU_ID=1 \
+      -b R2_ACCOUNT_ID=dev -b R2_ACCESS_KEY_ID=dev -b R2_SECRET_ACCESS_KEY=dev
+
+# ── osucad 预览（docs/osucad.md）────────────────────
+
+# 初始化 vendor 子模块（clone 后没拉子模块时）
+osucad-init:
+    git submodule update --init vendor/osucad
+
+# 预览器 dev server（vite source 模式，改 framework/core 源码即时生效）:4201
+osucad-dev:
+    cd vendor/osucad/apps/hitsound-preview && pnpm dev
+
+# osucad golden 采样测试（真实 osz 对 lazer 语义逐物件比对）
+osucad-test:
+    cd vendor/osucad/apps/hitsound-preview && pnpm vitest run
+
+# 重建 static/osucad 产物（源码定位：OSUCAD_DIR > vendor/osucad > ../osucad）
+osucad-build:
+    bash scripts/build-osucad-preview.sh
+
+# CDP 全链路冒烟：自拉起/复用 :4521 dev server，跑完自动收尾
+osucad-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if curl -sf -o /dev/null http://localhost:4521; then
+      echo "· 复用已在 :4521 运行的 dev server"
+      exec node scripts/smoke-osucad-preview.mjs
+    fi
+    # 直接起 vite（绕开 pnpm 壳进程，保证 trap 能杀干净）
+    ./node_modules/.bin/vite dev --port 4521 >/tmp/hitsound-share-smoke-dev.log 2>&1 &
+    SRV=$!; trap 'kill $SRV 2>/dev/null || true' EXIT
+    for i in $(seq 1 60); do
+      curl -sf -o /dev/null http://localhost:4521 && break || sleep 1
+    done
+    curl -sf -o /dev/null http://localhost:4521 || { echo "dev server 未就绪，日志见 /tmp/hitsound-share-smoke-dev.log"; exit 1; }
+    node scripts/smoke-osucad-preview.mjs
+
+# osucad 推了新提交后的一条命令：bump 指针 → 重建产物 → 单测+构建 → 冒烟 → 暂存
+osucad-release:
+    git submodule update --remote vendor/osucad
+    bash scripts/build-osucad-preview.sh
+    @just verify
+    @just osucad-smoke
+    git add vendor/osucad static/osucad static/osucad.build-info.txt
+    @echo "—— 指针与产物已暂存，git diff --cached 确认后提交"

@@ -40,6 +40,11 @@ submodule 也没影响。
 
 ## 更新工作流（改预览器）
 
+> 以下每步都有 justfile 封装（`just` 列出）：`just osucad-dev` / `just osucad-test` /
+> `just osucad-build` / `just osucad-smoke`（自拉起 dev server 跑完自动收尾）。
+> osucad 推了新提交后要同步到本站，一条命令走全流程：`just osucad-release`
+> （bump 子模块指针 → 重建产物 → 单测+构建 → 冒烟 → 暂存待提交）。
+
 ### 1. 源码就位
 
 二选一：
