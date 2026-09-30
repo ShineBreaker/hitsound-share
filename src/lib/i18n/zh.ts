@@ -72,7 +72,7 @@ const zh = {
 	'help.browse.title': '浏览与试听',
 	'help.browse.body': '左侧目录树选择分组与文件夹；点击文件行播放 / 暂停，点击波形跳到对应位置；行获焦后 Space / Enter 播放。',
 	'help.download.title': '下载',
-	'help.download.body': '文件行末的 ⤓ 下载单个文件；「下载整包」按当前分组内容实时打包为 zip。',
+	'help.download.body': '文件行末的 ↓ 下载单个文件；「下载整包」按当前分组内容实时打包为 zip。',
 	'help.kit.title': '组装面板',
 	'help.kit.body': '把文件行拖进右下角面板格子，或勾选多选后按 Q–V / 点击格子批量加入。命名规则：<行>-<列><序号>.<格式>（如 drum-hitnormal0.wav）：批量加入自动从 0 编号，格内已有数字序号时从最大值续编，手动拖入的单个文件无序号；zip 内重名会标红提醒。',
 	'help.keymap.title': '格子快捷键',

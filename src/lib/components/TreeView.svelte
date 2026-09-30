@@ -1,6 +1,6 @@
 <script lang="ts">
 	// 目录树节点：递归渲染（Svelte 5 通过自引用 import 实现递归组件）。
-	// 包主/管理员 hover 可见 ✎：行内编辑节点名（大类=包名，小类=文件夹末级段）
+	// 包主/管理员 hover 可见行尾改名钮：行内编辑节点名（大类=包名，小类=文件夹末级段）
 	import type { TreeNode } from '$lib/types';
 	import { t } from '$lib/i18n';
 	import type { Me } from '$lib/api';
@@ -106,8 +106,9 @@
 			{node.name}
 		</button>
 		{#if canEdit}
-			<button class="rename" title={t('action.rename')} aria-label={t('action.rename')} onclick={startEdit}>
-				✎
+			<button class="iconbtn" title={t('action.rename')} aria-label={t('action.rename')} onclick={startEdit}>
+				<!-- Comfortaa 无 ✎ 字形（系统回落渲染各异），一律用内联 SVG -->
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
 			</button>
 		{/if}
 	{/if}
@@ -223,8 +224,8 @@
 		border-color: var(--accent-pink);
 	}
 
-	/* ✎ 按钮：默认隐藏，行 hover 或自身 focus 时浮现 */
-	.rename {
+	/* 行尾操作钮（改名/删除）：默认隐藏，行 hover 或自身 focus 时浮现 */
+	.iconbtn {
 		flex: none;
 		width: 22px;
 		height: 22px;
@@ -235,24 +236,30 @@
 		border: none;
 		background: transparent;
 		color: var(--text-faint);
-		font-size: 11px;
 		cursor: pointer;
 		border-radius: var(--radius);
 	}
-	.row:hover .rename,
-	.rename:focus-visible {
+	.iconbtn svg {
+		width: 13px;
+		height: 13px;
+	}
+	.row:hover .iconbtn,
+	.iconbtn:focus-visible {
 		display: inline-flex;
 	}
 	/* 触屏没有 hover：常显（小屏触控目标放宽到 32px） */
 	@media (hover: none) {
-		.rename {
+		.iconbtn {
 			display: inline-flex;
 			width: 32px;
 			height: 32px;
-			font-size: 13px;
+		}
+		.iconbtn svg {
+			width: 15px;
+			height: 15px;
 		}
 	}
-	.rename:hover {
+	.iconbtn:hover {
 		background: var(--bg-l3);
 		color: var(--accent-bright);
 	}
