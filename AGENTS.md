@@ -79,6 +79,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 - 领域术语（包/文件夹/blob/影子包/对齐/秒传…）：`CONTEXT.md`——命名新 module、写文案与注释时沿用其中的词
 - 已定架构决策：`docs/adr/`（浏览器端打包、内容寻址 + 绝对对齐、影子包附加、只核验新 blob）——改动若与某条 ADR 冲突，先与用户确认，再新增 ADR 取代旧条目
 - 上传/附加/合并/删除/配额/去重方案：`docs/tech-proposal.md`（设计期快照，实现以代码为准）
+- 部署步骤与运维要点：`docs/deployment.md`（环境变量、schema 升级顺序、访问门运维、验证清单）
 - 需求口径与决策记录：`docs/requirements-consensus.md`（设计期快照，P10-P13 为 v4 增补）
 - 视觉与组件规范：`DESIGN.md`；表结构变更：`schema.sql`；CSP 与适配器：`svelte.config.js`；子请求预算与核验取舍：`src/routes/api/upload/done/+server.ts` 头注
 
