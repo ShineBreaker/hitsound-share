@@ -86,6 +86,21 @@ export function renameFolder(pkgId: string, from: string, to: string): Promise<v
 	return mutate(`/api/package/${encodeURIComponent(pkgId)}/folder`, 'PATCH', { from, to });
 }
 
+/** 删除整包（包主/管理员） */
+export function deletePackage(pkgId: string): Promise<void> {
+	return mutate(`/api/package/${encodeURIComponent(pkgId)}`, 'DELETE');
+}
+
+/** 删除小类（文件夹及其子文件夹的全部文件；包主/管理员） */
+export function deleteFolder(pkgId: string, path: string): Promise<void> {
+	return mutate(`/api/package/${encodeURIComponent(pkgId)}/folder`, 'DELETE', { path });
+}
+
+/** 批量删除文件行（包主删自己包的 / 管理员任意，可跨包，≤500） */
+export function deleteFiles(ids: string[]): Promise<void> {
+	return mutate('/api/files', 'DELETE', { ids });
+}
+
 export interface AdminRow {
 	osu_id: number;
 	username: string;

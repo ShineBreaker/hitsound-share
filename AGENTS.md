@@ -32,12 +32,12 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 ## 目录速览
 
-- `src/lib/server/` — 仅服务端代码：`osu.ts`（唯一出网通道）、`session.ts`（HMAC 签名 cookie）、`guard.ts`（`requireUser`/`requirePackageOwner`，返回 Response 即已作答）、`env.ts`（密钥读取 + `uploadCapable`/`pickR2Secrets` 能力判定）、`media.ts`（R2 key/Range/流式代理）、`upload.ts`（manifest 校验/预签名 PUT+GET/魔数）、`ledger.ts`（Blob 账本：refcount 登记/对齐/回收，唯一入口）、`verify.ts`（done 新 blob 核验）、`packages.ts`（包行查询/pending 懒清理）
+- `src/lib/server/` — 仅服务端代码：`osu.ts`（唯一出网通道）、`session.ts`（HMAC 签名 cookie）、`guard.ts`（`requireUser`/`requirePackageOwner`/`requireSuperAdmin`，返回 Response 即已作答）、`env.ts`（密钥读取 + `uploadCapable`/`pickR2Secrets` 能力判定）、`admin.ts`（管理员判定：超管 = ADMIN_OSU_ID 环境变量，管理员 = `users.is_admin`，每次实时查库不落 session）、`media.ts`（R2 key/Range/流式代理）、`upload.ts`（manifest 校验/预签名 PUT+GET/魔数）、`ledger.ts`（Blob 账本：refcount 登记/对齐/回收，唯一入口；`releasePackage` 整包、`releaseFiles` 文件/文件夹级删除）、`verify.ts`（done 新 blob 核验）、`packages.ts`（包行查询/pending 懒清理）
 - `src/lib/*.ts` — 浏览器端 deep module：`upload-pipeline.ts`（解包→哈希→manifest→并发直传→done，事件流上报）、`zip-save.ts`（整包下载与组装面板共用的打包落盘）、`player.svelte.ts`（全站唯一播放器）、`kit.svelte.ts`（组装面板格子/序号/Q–V 键位，唯一入口）、`selection.svelte.ts`（文件表选中集 + 入格）、`ui.svelte.ts` + `tour.ts`（帮助/新手引导状态与步骤）、`pool.ts`（并发池）、`api.ts`（含 peaks 合批）
 - `src/test/` — 测试 adapter：`d1-sqlite.ts`（node:sqlite 模拟 D1）、`r2-memory.ts`（内存 R2），均带 `calls` 计数用于断言子请求预算
-- `src/routes/api/**` — 全部 API 端点（编译为 Pages Functions）：`upload`（manifest+影子包）、`upload/done`（核验+合并）、`package/[id]`（PATCH 改名 / DELETE）、`package/[id]/folder`（小类改名）、`package/[id]/zip`（整包下载清单）、`blob/[hash]/[ext]`（下载回退代理）、`admin/purge-zips`、`tree`/`files`/`waveform`/`my`/`auth`/`config`
+- `src/routes/api/**` — 全部 API 端点（编译为 Pages Functions）：`upload`（manifest+影子包）、`upload/done`（核验+合并）、`package/[id]`（PATCH 改名 / DELETE 整包）、`package/[id]/folder`（PATCH 小类改名 / DELETE 小类删除）、`package/[id]/zip`（整包下载清单）、`files`（GET 列文件 / DELETE 批量删文件，可跨包）、`blob/[hash]/[ext]`（下载回退代理）、`admin/purge-zips`、`admin/admins`（管理员名单，仅超管）、`tree`/`waveform`/`my`/`auth`/`config`
 - `src/routes/+page.ts` prerender 首页 shell 省 Functions 配额；整包下载由 `+page.svelte` 拉清单后交给 `zip-save.ts`（fflate 流式 STORE）
-- `src/lib/components/` — TreeView（含行内改名）/ FileTable（复选框多选，行可拖入组装面板）/ WaveformCanvas / UploadDialog（新建/附加模式）/ MyPackages / KitBuilder（右下角悬浮组装面板，渲染 `kit`；自动展开必须经 setTimeout 延迟——dragstart 内同步改 DOM 会被 Chromium 取消拖拽）/ HelpDialog（顶栏「?」与 `?` 键）/ Tour（首次访问分步引导，目标用 `data-tour` 属性标注——新增或移动被引导的元素时同步更新 `tour.ts`）
+- `src/lib/components/` — TreeView（行内改名 + 删除钮，包主/管理员可见）/ FileTable（复选框多选，行可拖入组装面板）/ WaveformCanvas / UploadDialog（新建/附加模式）/ MyPackages / AdminPanel（超管名单维护）/ KitBuilder（右下角悬浮组装面板，渲染 `kit`；自动展开必须经 setTimeout 延迟——dragstart 内同步改 DOM 会被 Chromium 取消拖拽）/ HelpDialog（顶栏「?」与 `?` 键）/ Tour（首次访问分步引导，目标用 `data-tour` 属性标注——新增或移动被引导的元素时同步更新 `tour.ts`）
 - `src/lib/i18n/` — 文案集中在 `zh.ts` + `t()`（预留 en），不要在组件里写死中文
 - `schema.sql` — D1 表结构（v4：packages.append_to 影子包）；`wrangler.toml` — Pages 构建配置 + R2/D1 bindings；`svelte.config.js` — CSP
 - 环境三件套：`.envrc`（direnv 入口）、`manifest.scm`（guix 依赖）、`pnpm-workspace.yaml`（pnpm 设置）
@@ -48,7 +48,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 2. 凭证只从环境变量读（`getSecrets()`），严禁硬编码、打印、入库；`.env` 已 gitignore。Agent 不得读取、展示、复制 `.env` 或 Pages 变量中的密钥**值**，不得把任何密钥发往外部（含日志、issue、对话输出）；任何对外发送数据的操作须逐次征得用户确认
 3. 内容寻址存储：R2 key = `blobs/<hash前2>/<sha256>.<ext>`（统一经 `blobKey()` 组装），`blobs.refcount` 管生命周期（ADR 0002）——refcount 读写一律经 `ledger.ts`，每个操作的子请求数须与包大小无关（集合式 SQL / `RETURNING` / R2 批量 delete），归零且无 files 引用才能删 R2 对象。**整包下载 = 浏览器按当前 files 实时拼 zip**（清单端点 + 预签名 GET 直连/`/api/blob` 代理回退），**original.zip 已停传停存**。附加上传走「影子 pending 包」：`packages.append_to` 指向目标包，done 核验后事务性合并；仅限自己的 visible 包
 4. 文件/文件夹名含 `#`、空格、`&`、逗号是常态：渲染必须转义，URL 必须用 URLSearchParams/encodeURIComponent；folder_path 匹配走全值精确比较（不用 LIKE）
-5. 上传链路优雅降级：6 个必需变量（OSU_CLIENT_ID / OSU_CLIENT_SECRET / SESSION_SECRET / R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY，判定唯一实现 `uploadCapable()`；ADMIN_OSU_ID 可选，只控制管理员权限）任一缺失 → `/api/config` 返回 `uploadEnabled=false` → 前端隐藏登录/上传入口，浏览/试听/下载不受影响（下载清单端点只依赖 bindings + 可选预签名回退）；改上传链路时保持该行为
+5. 上传链路优雅降级：6 个必需变量（OSU_CLIENT_ID / OSU_CLIENT_SECRET / SESSION_SECRET / R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY，判定唯一实现 `uploadCapable()`；ADMIN_OSU_ID 可选，指定唯一超级管理员——管理员名单存 `users.is_admin`、由超管经 `/api/admin/admins` 维护）任一缺失 → `/api/config` 返回 `uploadEnabled=false` → 前端隐藏登录/上传入口，浏览/试听/下载不受影响（下载清单端点只依赖 bindings + 可选预签名回退）；改上传链路时保持该行为
 6. 测试打在 deep module 的 interface 上（路由 handler、`ledger`、`verify`、`runUpload`、`packZip`、`player`）：D1/R2 用 `src/test/` 的 adapter，不 mock 内部函数；涉及 D1/R2 的改动须用 `calls` 断言子请求预算
 7. UI 手写 CSS 变量（osu!editor 橄榄绿：主薄荷 #3fd8a0、点缀粉 #ff7e96、页面橄榄灰 #31362f / 面板炭绿 #1e231e、圆角 6px/12px），token 与组件模式一律以 `DESIGN.md` 为准；不引入 UI 组件库，字体 Comfortaa 自托管（Torus 为商业字体、禁止第三方分发，勿引入真文件），勿依赖外链 CDN
 

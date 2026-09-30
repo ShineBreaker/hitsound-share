@@ -17,15 +17,18 @@
 		parseNodeKey,
 		renamePackage,
 		renameFolder,
+		deletePackage,
+		deleteFolder,
+		deleteFiles,
 		type TreePackage,
 		type Me
 	} from '$lib/api';
 	import { player } from '$lib/player.svelte';
 	import { saveZip } from '$lib/zip-save';
 	import { t } from '$lib/i18n';
-	import type { FileRow } from '$lib/types';
+	import type { FileRow, TreeNode } from '$lib/types';
 	import { selection, assignSelection } from '$lib/selection.svelte';
-	import { cellForKey } from '$lib/kit.svelte';
+	import { cellForKey, kit } from '$lib/kit.svelte';
 	import { ui } from '$lib/ui.svelte';
 
 	let packages = $state<TreePackage[]>([]);
@@ -69,6 +72,17 @@
 	});
 
 	const currentPkgId = $derived(parseNodeKey(selected).pkg);
+	// 「删除所选」可见性：管理员任意，否则须是当前包主（跨包选中的他人文件服务端仍会 403）
+	const canDeleteSel = $derived(
+		Boolean(
+			me.loggedIn &&
+				(me.isAdmin ||
+					(me.osuId != null &&
+						me.osuId ===
+							(packages.find((x) => x.id === currentPkgId)?.uploaderOsuId ?? null)))
+		)
+	);
+	let selDeleting = $state(false); // 批量删除进行中（防连点）
 
 	async function loadPage(key: string, append: boolean): Promise<void> {
 		const { pkg, folder } = parseNodeKey(key);
@@ -191,6 +205,72 @@
 		return true;
 	}
 
+	/**
+	 * 树节点删除（大类 = 整包；小类 = 该文件夹及子文件夹全部文件）。
+	 * 删除后清选中集（其中可能有已删文件），并修正落在被删子树里的 selected。
+	 */
+	async function deleteNode(node: TreeNode): Promise<void> {
+		const { pkg, folder } = parseNodeKey(node.key);
+		const p = packages.find((x) => x.id === pkg);
+		if (!p) return;
+		const isPkg = folder === '';
+		const name = isPkg ? p.name : node.name;
+		if (!window.confirm(t(isPkg ? 'pkg.confirmDelete' : 'folder.confirmDelete', { name }))) {
+			return;
+		}
+		try {
+			if (isPkg) await deletePackage(pkg);
+			else await deleteFolder(pkg, folder);
+		} catch {
+			window.alert(t('delete.failed'));
+			return;
+		}
+		selection.clear();
+		const deadKey = node.key;
+		await refreshTree();
+		// 当前选中落在被删节点（或其子树）里：包删（或文件夹删恰好删空整包）→ 清空；
+		// 否则回包根
+		if (selected === deadKey || selected.startsWith(`${deadKey}/`)) {
+			if (isPkg || !packages.some((x) => x.id === pkg)) {
+				selected = '';
+				files = [];
+				total = 0;
+			} else {
+				selected = `pkg:${pkg}`;
+				void loadPage(selected, false);
+			}
+		}
+	}
+
+	/** 删除选中集里的全部文件（可跨包；权限服务端逐包校验；>450 分多次请求） */
+	async function deleteSelected(): Promise<void> {
+		if (selDeleting || selection.size === 0) return;
+		const ids = selection.items.map((i) => i.id);
+		if (!window.confirm(t('files.confirmDelete', { count: ids.length }))) return;
+		selDeleting = true;
+		try {
+			// 服务端单次上限 500，留余量按 450 分片
+			for (let i = 0; i < ids.length; i += 450) {
+				await deleteFiles(ids.slice(i, i + 450));
+			}
+		} catch {
+			selDeleting = false;
+			window.alert(t('delete.failed'));
+			void loadPage(selected, false); // 分片中途失败：已删部分同步回来
+			void refreshTree();
+			return;
+		}
+		const gone = new Set(ids);
+		const removedHere = files.filter((f) => gone.has(f.id)).length;
+		files = files.filter((f) => !gone.has(f.id));
+		total = Math.max(0, total - removedHere);
+		selection.items = selection.items.filter((i) => !gone.has(i.id));
+		kit.removeByFileIds(gone); // 组装格子里引用的已删文件一并清掉（否则打包时 404）
+		selDeleting = false;
+		if (files.length === 0) void loadPage(selected, false); // 当前页删空：重载校正
+		void refreshTree(); // 文件夹可能已空 → 树刷新
+	}
+
 	/** 点行：未播→播、播放中→暂停、暂停→继续（key = file.id） */
 	function togglePlay(file: FileRow): void {
 		player.toggle(file.id, `/f/${encodeURIComponent(file.id)}`, file.durationS ?? undefined);
@@ -255,6 +335,7 @@
 					bind:editingKey
 					onselect={select}
 					onsubmit={submitRename}
+					ondelete={deleteNode}
 				/>
 			{/each}
 			{/if}
@@ -309,7 +390,18 @@
 		{#if selection.size > 0}
 			<div class="selbar" role="status">
 				<span class="selbar-text">{t('sel.bar', { count: selection.size })}</span>
-				<button class="btn" onclick={() => selection.clear()}>{t('sel.clear')}</button>
+				<span class="selbar-btns">
+					{#if canDeleteSel}
+						<button
+							class="btn danger"
+							disabled={selDeleting}
+							onclick={() => void deleteSelected()}
+						>
+							{t('sel.delete')}
+						</button>
+					{/if}
+					<button class="btn" onclick={() => selection.clear()}>{t('sel.clear')}</button>
+				</span>
 			</div>
 		{/if}
 
@@ -535,6 +627,12 @@
 		white-space: nowrap;
 		font-size: 12px;
 		color: var(--accent-bright);
+	}
+	.selbar-btns {
+		flex: none;
+		display: flex;
+		align-items: center;
+		gap: 8px;
 	}
 
 	/* 目录抽屉开关：仅窄屏显示 */

@@ -97,6 +97,15 @@ export class Kit {
 		this.cells[key] = list.filter((i) => i.uid !== uid);
 	}
 
+	/** 移除引用给定文件 id 的全部格子项（文件被删除后调用，防止打包时 404） */
+	removeByFileIds(ids: Set<string>): void {
+		for (const k of Object.keys(this.cells)) {
+			const list = this.cells[k];
+			const filtered = list.filter((i) => !ids.has(i.id));
+			if (filtered.length !== list.length) this.cells[k] = filtered;
+		}
+	}
+
 	clear(): void {
 		this.cells = {};
 	}

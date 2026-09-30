@@ -39,6 +39,14 @@ const zh = {
 	'action.rename': '重命名',
 	'rename.failed': '改名失败，请重试（可能名称无效或网络问题）',
 
+	// 删除（树节点 / 选中集）
+	'tree.deletePackage': '删除分组',
+	'tree.deleteFolder': '删除小类',
+	'pkg.confirmDelete': '确定删除分组「{name}」及其全部文件？该操作不可恢复。',
+	'folder.confirmDelete': '确定删除小类「{name}」及其中全部文件？该操作不可恢复。',
+	'files.confirmDelete': '确定删除选中的 {count} 个文件？该操作不可恢复。',
+	'delete.failed': '删除失败，请重试',
+
 	// 整包下载（浏览器按当前内容实时打包）
 	'download.packaging': '打包中 {n}/{total}…',
 	'download.failedRetry': '下载失败，重试',
@@ -60,6 +68,7 @@ const zh = {
 	// 多选
 	'sel.bar': '已选 {count} 个 · 按 Q–V 或点击组装面板格子加入',
 	'sel.clear': '清除',
+	'sel.delete': '删除所选',
 	'sel.row': '选择该行',
 	'sel.all': '全选 / 取消全选当前页',
 

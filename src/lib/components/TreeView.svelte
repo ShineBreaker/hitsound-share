@@ -1,6 +1,7 @@
 <script lang="ts">
 	// 目录树节点：递归渲染（Svelte 5 通过自引用 import 实现递归组件）。
-	// 包主/管理员 hover 可见行尾改名钮：行内编辑节点名（大类=包名，小类=文件夹末级段）
+	// 包主/管理员 hover 可见行尾操作钮：改名（大类=包名，小类=文件夹末级段）/ 删除
+	// （大类=整包，小类=该文件夹及子文件夹全部文件）
 	import type { TreeNode } from '$lib/types';
 	import { t } from '$lib/i18n';
 	import type { Me } from '$lib/api';
@@ -15,6 +16,8 @@
 		onselect?: (key: string) => void;
 		/** 提交改名（key + 新末级名），返回是否成功；失败保持编辑态 */
 		onsubmit?: (key: string, name: string) => Promise<boolean>;
+		/** 点删除钮（确认与接口调用由父级负责；不传则隐藏删除钮） */
+		ondelete?: (node: TreeNode) => void;
 	}
 	let {
 		node,
@@ -23,7 +26,8 @@
 		me = { loggedIn: false },
 		editingKey = $bindable(''),
 		onselect,
-		onsubmit
+		onsubmit,
+		ondelete
 	}: Props = $props();
 
 	// 默认收缩到最小（只显示顶层包名），由用户点箭头/名字逐级展开
@@ -110,6 +114,16 @@
 				<!-- Comfortaa 无 ✎ 字形（系统回落渲染各异），一律用内联 SVG -->
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
 			</button>
+			{#if ondelete}
+				<button
+					class="iconbtn danger"
+					title={node.isPackage ? t('tree.deletePackage') : t('tree.deleteFolder')}
+					aria-label={node.isPackage ? t('tree.deletePackage') : t('tree.deleteFolder')}
+					onclick={() => ondelete(node)}
+				>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+				</button>
+			{/if}
 		{/if}
 	{/if}
 </div>
@@ -125,6 +139,7 @@
 			bind:editingKey
 			{onselect}
 			{onsubmit}
+			{ondelete}
 		/>
 	{/each}
 {/if}
@@ -262,5 +277,8 @@
 	.iconbtn:hover {
 		background: var(--bg-l3);
 		color: var(--accent-bright);
+	}
+	.iconbtn.danger:hover {
+		color: var(--accent-pink);
 	}
 </style>
