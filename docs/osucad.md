@@ -8,7 +8,8 @@
 ```
 hitsound-share                本仓库（SvelteKit + CF Pages）
 ├── vendor/osucad             ← submodule → github.com/ShineBreaker/osucad.git
-│   └── 分支 main（指针钉在某个 commit，见 git submodule status）
+│   └── 分支 main（指针钉在某个 commit，见 git submodule status；
+│       update=none + shallow：CI/普通 clone 跳过不拉，按需 `just osucad-init`）
 ├── static/osucad/            ← 提交入库的构建产物（Pages 直接部署，勿手改）
 ├── static/osucad.build-info.txt  ← 本次构建的源码溯源（自动生成）
 └── scripts/build-osucad-preview.sh / smoke-osucad-preview.mjs
@@ -27,16 +28,22 @@ osucad 侧远端：
 ## 克隆与部署
 
 ```bash
-# 只部署（直接用已提交的 static/osucad 产物）：什么都不用做
+# 部署/日常使用：子模块标了 update=none，任何 clone（含 --recurse-submodules）
+# 都只会注册不会下载 vendor——直接用已提交的 static/osucad 产物
 git clone <repo> && pnpm install && pnpm build
 
-# 要改预览器/重建产物：连子模块一起拉
-git clone --recurse-submodules <repo>
-# 或已 clone：git submodule update --init vendor/osucad
+# 要改预览器/重建产物：按需拉 vendor（depth-1 快照，几秒内完成）
+just osucad-init
+# 或不用 just：
+git -c submodule.vendor/osucad.update=checkout submodule update --init vendor/osucad
 ```
 
-Cloudflare Pages 部署**不需要**子模块——产物已随库提交，Pages 不初始化
-submodule 也没影响。
+**为什么 update=none**:osucad 仓库单快照约 70M（大头是上游 `*.osk`
+demo 资产，与预览 app 无关），CF Pages 克隆子模块时在抖动链路上反复
+early EOF 导致部署失败——而 Pages 构建根本不用 vendor 内容。标记
+`update=none` 后 CI 与部署克隆完全跳过，零依赖；开发者按上一条命令
+按需拉取。若想让全历史：`git -C vendor/osucad fetch --unshallow`，
+或干脆在 `../osucad` 单独 clone 一份。
 
 ## 更新工作流（改预览器）
 
@@ -50,7 +57,7 @@ submodule 也没影响。
 二选一：
 
 ```bash
-git submodule update --init vendor/osucad     # 用库内钉住的版本
+just osucad-init                              # 拉库内钉住的版本（update=none，需此命令）
 # 或自己 clone 到旁边，开发更自由：
 git clone git@github.com:ShineBreaker/osucad.git ../osucad   # main 即工作分支
 ```
@@ -101,7 +108,9 @@ node scripts/smoke-osucad-preview.mjs  # CDP 全链路冒烟
   脚本/文档改动
 - **若 osucad 推了新提交**，顺手 bump 子模块指针保持一致：
   `git -C vendor/osucad pull origin main`（或 checkout 目标 sha），
-  然后 `git add vendor/osucad` 提交指针
+  然后 `git add vendor/osucad` 提交指针——`just osucad-release` 一条命令
+  走完全流程（pull → 重建 → verify → 冒烟 → 暂存）。注意别用
+  `git submodule update --remote`：update=none 会让它静默跳过
 
 `build-info.txt` 记录的是**实际构建所用源码**（remote/branch/sha/dirty），
 子模块指针记录的是**库内钉住的版本**——两者语义不同：开发期可以不一致
@@ -160,10 +169,15 @@ BeatmapSkin → `sourceChanged` → 所有 SkinnableDrawable/SkinnableSound 重�
 
 ## submodule 使用注意
 
+- `.gitmodules` 上 `update = none` + `shallow = true`：CI 与普通 clone 不拉
+  vendor；开发者 `just osucad-init` 拉 depth-1 快照。所有经 `git submodule
+  update` 的路径（含 `--remote`）都会跳过它——bump 指针用 vendor 内
+  `git pull` 或 `just osucad-release`
 - 指针与构建产物可能短暂不一致（比如在兄弟 clone 里构建过但还没推/没 bump）——
   以 `build-info.txt` 为构建真相，指针为「库内钉住版本」，发版前对齐
-- `git submodule update --remote` 会把 vendor 拉到 `main` 最新，
-  再 `git add vendor/osucad` 提交新指针；配合 `build-osucad-preview.sh` 重建产物
 - 子模块内做开发也可以，但注意 git 的 detached HEAD 习惯（先
   `git checkout main` 再动手）；改完记得：osucad 推远端 →
   本仓库 bump 指针 → 重建产物，三步缺一不可
+- 远期瘦身选项：osucad 侧 `git lfs migrate` 把 `*.osk` 迁入 LFS
+  （重写历史、需强推+换 pin），或只对新增大文件 `lfs track`——
+  对 CI 无必要（已不拉），主要受益是人的全量克隆
