@@ -139,8 +139,8 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 		stmts.push(
 			env.DB.prepare(
 				`INSERT INTO files (id, package_id, folder_path, name, format, duration_s, sample_rate,
-				                    bit_depth, channels, size_bytes, peaks, blob_hash)
-				 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
+				                    bit_depth, channels, size_bytes, peaks, blob_hash, owner_osu_id)
+				 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`
 			).bind(
 				crypto.randomUUID(),
 				packageId,
@@ -153,7 +153,8 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 				e.channels,
 				e.size,
 				e.peaks ? JSON.stringify(e.peaks) : null,
-				e.hash
+				e.hash,
+				session.osuId
 			)
 		);
 	}

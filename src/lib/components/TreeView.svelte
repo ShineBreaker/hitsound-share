@@ -4,7 +4,7 @@
 	// （大类=整包，小类=该文件夹及子文件夹全部文件）
 	import type { TreeNode } from '$lib/types';
 	import { t } from '$lib/i18n';
-	import type { Me } from '$lib/api';
+	import { canManage, type Me } from '$lib/api';
 	import TreeView from './TreeView.svelte';
 
 	interface Props {
@@ -34,9 +34,7 @@
 	let open = $state(false);
 	const hasChildren = $derived(node.children.length > 0);
 	const editing = $derived(editingKey === node.key);
-	const canEdit = $derived(
-		Boolean(me.loggedIn && (me.isAdmin || (me.osuId != null && me.osuId === node.ownerOsuId)))
-	);
+	const canEdit = $derived(canManage(me, node.ownerOsuId));
 	let editValue = $state('');
 	let submitting = $state(false);
 	let failed = $state(false); // 提交失败：红框短暂提示，保持编辑态不丢输入
@@ -109,6 +107,10 @@
 		>
 			{node.name}
 		</button>
+		{#if node.isPackage && node.ownerName}
+			<!-- 上传者用户名（系统导入无 owner 不显示；与文件夹节点无关，包级信息） -->
+			<span class="owner" title={node.ownerName}>{node.ownerName}</span>
+		{/if}
 		{#if canEdit}
 			<button class="iconbtn" title={t('action.rename')} aria-label={t('action.rename')} onclick={startEdit}>
 				<!-- Comfortaa 无 ✎ 字形（系统回落渲染各异），一律用内联 SVG -->
@@ -213,6 +215,20 @@
 	}
 	.label.pkg.active {
 		color: var(--on-accent);
+	}
+
+	/* 包节点的上传者用户名：弱化小字，不抢包名（收窄面板下截断，title 兜底看全名） */
+	.owner {
+		flex: none;
+		max-width: 88px;
+		margin-left: 2px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--text-faint);
+		font-size: 11px;
+		/* 编辑态 / 行内按钮浮现时不让小字挤压操作区 */
+		pointer-events: none;
 	}
 
 	/* 行内改名输入：与 label 同高，占满剩余宽度 */

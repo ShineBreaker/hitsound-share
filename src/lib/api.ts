@@ -7,6 +7,7 @@ export interface TreePackage {
 	id: string;
 	name: string;
 	uploaderOsuId: number | null;
+	uploaderUsername: string | null;
 	folders: string[];
 }
 
@@ -17,6 +18,11 @@ export interface Me {
 	osuId?: number;
 	isAdmin?: boolean;
 	isSuperAdmin?: boolean;
+}
+
+/** 管理权判定：管理员管理一切，普通用户仅内容 owner（包级 uploader / 文件级 owner；null = 系统导入仅管理员） */
+export function canManage(me: Me, ownerId: number | null): boolean {
+	return Boolean(me.loggedIn && (me.isAdmin || (me.osuId != null && me.osuId === ownerId)));
 }
 
 async function getJSON<T>(url: string, init?: RequestInit): Promise<T> {
@@ -84,6 +90,11 @@ export function renamePackage(pkgId: string, name: string): Promise<void> {
 /** 小类改名（包内文件夹，含子文件夹级联；to 已存在 = 合并） */
 export function renameFolder(pkgId: string, from: string, to: string): Promise<void> {
 	return mutate(`/api/package/${encodeURIComponent(pkgId)}/folder`, 'PATCH', { from, to });
+}
+
+/** 单文件改名（文件 owner / 管理员） */
+export function renameFile(id: string, name: string): Promise<void> {
+	return mutate('/api/files', 'PATCH', { id, name });
 }
 
 /** 删除整包（包主/管理员） */
@@ -173,7 +184,8 @@ export function buildForest(packages: TreePackage[]): TreeNode[] {
 			key: `pkg:${p.id}`,
 			isPackage: true,
 			children: [],
-			ownerOsuId: p.uploaderOsuId
+			ownerOsuId: p.uploaderOsuId,
+			ownerName: p.uploaderUsername
 		};
 		const byPath = new Map<string, TreeNode>([['', root]]);
 
@@ -187,7 +199,8 @@ export function buildForest(packages: TreePackage[]): TreeNode[] {
 				key: `pkg:${p.id}/${path}`,
 				isPackage: false,
 				children: [],
-				ownerOsuId: p.uploaderOsuId
+				ownerOsuId: p.uploaderOsuId,
+				ownerName: p.uploaderUsername
 			};
 			byPath.set(path, node);
 			// 注意：slash === -1 时父路径必须是 ''（包根），slice(0, -1) 会变成去尾字符

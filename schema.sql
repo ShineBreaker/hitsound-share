@@ -1,7 +1,10 @@
--- hitsound-share D1 schema (v4, 附加上传 + 实时打包下载)
+-- hitsound-share D1 schema (v5, 文件级所有者)
 -- 树结构说明：不设 folders 表，树由 files.folder_path 前缀聚合得出（DISTINCT + 前缀分组），
 -- 消除整层关联；空文件夹不保留（可接受损失）。
 -- v3→v4 线上变更：ALTER TABLE packages ADD COLUMN append_to TEXT;
+-- v4→v5 线上变更（顺序执行，回填前老代码不受影响）：
+--   ALTER TABLE files ADD COLUMN owner_osu_id INTEGER REFERENCES users(osu_id) ON DELETE SET NULL;
+--   UPDATE files SET owner_osu_id = (SELECT uploader_osu_id FROM packages WHERE packages.id = files.package_id);
 -- （v4 起 original.zip 停传停存，整包下载由浏览器按 files 实时打包）
 
 CREATE TABLE IF NOT EXISTS users (
@@ -44,7 +47,8 @@ CREATE TABLE IF NOT EXISTS files (
   channels  INTEGER,
   size_bytes INTEGER NOT NULL,
   peaks     TEXT,                         -- JSON 数组 ~200 峰值(0-1)，未知为 NULL
-  blob_hash TEXT NOT NULL REFERENCES blobs(hash)
+  blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+  owner_osu_id INTEGER REFERENCES users(osu_id) ON DELETE SET NULL  -- 上传者（文件级所有权）；NULL = 系统导入，仅管理员可动
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_pkg_folder ON files(package_id, folder_path);

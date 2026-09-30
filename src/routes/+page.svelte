@@ -15,8 +15,10 @@
 		fetchZipManifest,
 		buildForest,
 		parseNodeKey,
+		canManage,
 		renamePackage,
 		renameFolder,
+		renameFile,
 		deletePackage,
 		deleteFolder,
 		deleteFiles,
@@ -74,13 +76,7 @@
 	const currentPkgId = $derived(parseNodeKey(selected).pkg);
 	// 「删除所选」可见性：管理员任意，否则须是当前包主（跨包选中的他人文件服务端仍会 403）
 	const canDeleteSel = $derived(
-		Boolean(
-			me.loggedIn &&
-				(me.isAdmin ||
-					(me.osuId != null &&
-						me.osuId ===
-							(packages.find((x) => x.id === currentPkgId)?.uploaderOsuId ?? null)))
-		)
+		canManage(me, packages.find((x) => x.id === currentPkgId)?.uploaderOsuId ?? null)
 	);
 	let selDeleting = $state(false); // 批量删除进行中（防连点）
 
@@ -271,6 +267,24 @@
 		void refreshTree(); // 文件夹可能已空 → 树刷新
 	}
 
+	/**
+	 * 单文件改名提交（文件级 owner / 管理员；权限服务端把关）。
+	 * 成功后本地替换行名——不重拉列表（服务端按名排序，重拉会丢「加载更多」进度
+	 * 与滚动位置，下次进文件夹自然新序）；选中集里的同名快照一并同步
+	 */
+	async function submitFileRename(file: FileRow, newName: string): Promise<boolean> {
+		const name = newName.trim();
+		if (!name || name.includes('/') || name.includes('\\')) return false;
+		try {
+			await renameFile(file.id, name);
+		} catch {
+			return false;
+		}
+		files = files.map((f) => (f.id === file.id ? { ...f, name } : f));
+		selection.items = selection.items.map((i) => (i.id === file.id ? { ...i, name } : i));
+		return true;
+	}
+
 	/** 点行：未播→播、播放中→暂停、暂停→继续（key = file.id） */
 	function togglePlay(file: FileRow): void {
 		player.toggle(file.id, `/f/${encodeURIComponent(file.id)}`, file.durationS ?? undefined);
@@ -424,8 +438,10 @@
 					playingId={player.current}
 					paused={player.paused}
 					progress={player.progress}
+					{me}
 					onplay={togglePlay}
 					onseek={seek}
+					onrename={submitFileRename}
 				/>
 			{/if}
 		</div>

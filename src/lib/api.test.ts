@@ -1,7 +1,7 @@
 // fetchPeaks 批量合并：16ms 窗口内的 id 合并成一次 /api/waveform?ids=… 请求；
 // 失败 resolve null 并把本批 id 逐出缓存（下次可重试）
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fetchPeaks } from './api';
+import { fetchPeaks, buildForest } from './api';
 
 afterEach(() => {
 	vi.useRealTimers();
@@ -63,11 +63,27 @@ describe('fetchPeaks', () => {
 		expect(calls).toBeGreaterThanOrEqual(1);
 	});
 
-	it('响应缺少该 id → resolve null（但留在缓存）', async () => {
-		vi.useFakeTimers();
-		vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ peaks: {} }), { status: 200 }));
-		const p = fetchPeaks('bt_f');
-		await vi.advanceTimersByTimeAsync(50);
-		expect(await p).toBeNull();
+		it('响应缺少该 id → resolve null（但留在缓存）', async () => {
+			vi.useFakeTimers();
+			vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ peaks: {} }), { status: 200 }));
+			const p = fetchPeaks('bt_f');
+			await vi.advanceTimersByTimeAsync(50);
+			expect(await p).toBeNull();
+		});
+});
+
+describe('buildForest', () => {
+	it('owner id/用户名冗余下传到包节点与各级文件夹节点；系统导入为 null', () => {
+		const [root, sys] = buildForest([
+			{ id: 'p1', name: 'P1', uploaderOsuId: 42, uploaderUsername: 'alice', folders: ['a/b', 'a'] },
+			{ id: 'p2', name: 'P2', uploaderOsuId: null, uploaderUsername: null, folders: [''] }
+		]);
+		expect(root.ownerOsuId).toBe(42);
+		expect(root.ownerName).toBe('alice');
+		const a = root.children.find((n) => n.name === 'a')!;
+		expect(a.ownerOsuId).toBe(42);
+		expect(a.ownerName).toBe('alice');
+		expect(a.children[0].ownerName).toBe('alice'); // 深层文件夹同样携带
+		expect(sys.ownerName).toBeNull();
 	});
 });

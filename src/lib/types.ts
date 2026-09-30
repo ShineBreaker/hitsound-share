@@ -11,6 +11,8 @@ export interface FileRow {
 	bitDepth: number | null; // 有损格式为 null
 	channels: number | null;
 	sizeBytes: number;
+	ownerOsuId: number | null; // 上传者（文件级所有权）；null = 系统导入（仅管理员可动）
+	ownerName: string | null; // 上传者用户名（users.username，展示用；系统导入为 null）
 	peaks: number[] | null; // 波形峰值数组（0-1），未加载为 null
 }
 
@@ -21,6 +23,7 @@ export interface TreeNode {
 	isPackage: boolean;
 	children: TreeNode[];
 	ownerOsuId: number | null; // 所属包上传者（各节点冗余携带，改名按钮显示用）
+	ownerName: string | null; // 所属包上传者用户名（包节点展示用，各节点冗余携带）
 }
 
 /** 整包下载清单（/api/package/<id>/zip）：当前 files 全列 + 去重 hash 的拉取 URL */

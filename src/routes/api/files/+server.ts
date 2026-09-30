@@ -1,5 +1,6 @@
 // /api/files：按包 + 文件夹分页列文件（不 SELECT peaks，波形按需另取）；
-// DELETE 批量删除文件行（包主删自己包的 / 管理员任意，可跨包）
+// DELETE 批量删除（文件 owner 删自己传的 / 管理员任意，可跨包）；
+// PATCH 单文件改名（文件 owner 或管理员）
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getEnv } from '$lib/server/media';
@@ -21,6 +22,8 @@ interface DBFileRow {
 	bit_depth: number | null;
 	channels: number | null;
 	size_bytes: number;
+	owner_osu_id: number | null;
+	owner_name: string | null;
 }
 
 export const GET: RequestHandler = async ({ platform, url }) => {
@@ -41,11 +44,13 @@ export const GET: RequestHandler = async ({ platform, url }) => {
 
 	// 计数 + 当前页，batch 一次往返；COUNT(*) 是全文件夹行读，
 	// 「加载更多」（offset>0）时前端已持有 total，跳过计数省行读
-	// 页查询（值全部参数绑定）
+	// 页查询（值全部参数绑定；owner 用户名 JOIN 供前端展示与行级管理判定）
 	const pageStmt = env.DB.prepare(
-		`SELECT id, name, format, duration_s, sample_rate, bit_depth, channels, size_bytes
-		 FROM files WHERE package_id = ?1 AND folder_path = ?2
-		 ORDER BY name COLLATE NOCASE
+		`SELECT f.id, f.name, f.format, f.duration_s, f.sample_rate, f.bit_depth, f.channels,
+		        f.size_bytes, f.owner_osu_id, u.username AS owner_name
+		 FROM files f LEFT JOIN users u ON u.osu_id = f.owner_osu_id
+		 WHERE f.package_id = ?1 AND f.folder_path = ?2
+		 ORDER BY f.name COLLATE NOCASE
 		 LIMIT ?3 OFFSET ?4`
 	).bind(pkg, folder, limit, offset);
 
@@ -75,6 +80,8 @@ export const GET: RequestHandler = async ({ platform, url }) => {
 		bitDepth: r.bit_depth,
 		channels: r.channels,
 		sizeBytes: r.size_bytes,
+		ownerOsuId: r.owner_osu_id,
+		ownerName: r.owner_name,
 		peaks: null // 波形不随列表下发，前端按需拉 /api/waveform/<id>
 	}));
 
@@ -85,8 +92,9 @@ const MAX_DELETE_IDS = 500;
 
 /**
  * DELETE /api/files：body { ids: string[] }（≤500，去重）。
- * 目标可跨包：逐包校验归属——非管理员时所有文件的包都须是本人上传，
- * 任一不符 → 403 全不删（不做部分成功）；系统导入包（uploader NULL）仅管理员可动。
+ * 目标可跨包：逐文件校验归属——非管理员时所有文件都须是本人上传（文件级 owner，
+ * 与所在包的包主无关），任一不符 → 403 全不删（不做部分成功）；
+ * 系统导入文件（owner NULL）仅管理员可动。
  */
 export const DELETE: RequestHandler = async ({ request, platform, cookies }) => {
 	const g = await requireUser(platform, cookies);
@@ -105,11 +113,12 @@ export const DELETE: RequestHandler = async ({ request, platform, cookies }) => 
 	}
 	const unique = [...new Set(ids)];
 
-	// 目标文件的包归属（分片 IN；files 别名 f，选择器列名须带前缀）
+	// 目标文件的归属与所在包（分片 IN；files 别名 f，选择器列名须带前缀；
+	// package_id 供 releaseFiles 圈定受影响包）
 	const ownerStmts = selectByIds(unique, 'f.id').map((s) =>
 		env.DB.prepare(
-			`SELECT DISTINCT f.package_id AS pid, p.uploader_osu_id AS owner
-			 FROM files f JOIN packages p ON p.id = f.package_id WHERE ${s.clause}`
+			`SELECT DISTINCT f.package_id AS pid, f.owner_osu_id AS owner
+			 FROM files f WHERE ${s.clause}`
 		).bind(...s.params)
 	);
 	const pkgRows: Array<{ pid: string; owner: number | null }> = [];
@@ -118,7 +127,7 @@ export const DELETE: RequestHandler = async ({ request, platform, cookies }) => 
 		for (const r of res) pkgRows.push(...((r.results ?? []) as typeof pkgRows));
 	}
 	if (pkgRows.length === 0) return json({ error: 'not_found' }, { status: 404 });
-	// 全部是本人包则直接放行（省一次 users 读）；出现他人包才判定管理员
+	// 全部是本人文件则直接放行（省一次 users 读）；出现他人文件才判定管理员
 	if (
 		pkgRows.some((r) => r.owner !== g.session.osuId) &&
 		!(await isAdmin(env.DB, g.secrets, g.session.osuId))
@@ -132,4 +141,43 @@ export const DELETE: RequestHandler = async ({ request, platform, cookies }) => 
 		[...new Set(pkgRows.map((r) => r.pid))]
 	);
 	return json({ ok: true, deleted });
+};
+
+/**
+ * PATCH /api/files：body { id, name }。单文件改名（不移动路径），文件 owner 或管理员；
+ * name trim 后 1-100 字符，含路径分隔符（/ \）→ 400 bad_name。
+ */
+export const PATCH: RequestHandler = async ({ request, platform, cookies }) => {
+	const g = await requireUser(platform, cookies);
+	if (g instanceof Response) return g;
+
+	const body = (await request.json().catch(() => null)) as { id?: unknown; name?: unknown } | null;
+	const id = body?.id;
+	const name = body?.name;
+	if (typeof id !== 'string' || id.length === 0 || id.length > 64) {
+		return json({ error: 'bad_id' }, { status: 400 });
+	}
+	const trimmed = typeof name === 'string' ? name.trim() : '';
+	if (
+		typeof name !== 'string' ||
+		trimmed.length < 1 ||
+		trimmed.length > 100 ||
+		name.includes('/') ||
+		name.includes('\\')
+	) {
+		return json({ error: 'bad_name' }, { status: 400 });
+	}
+
+	const row = await g.env.DB.prepare('SELECT owner_osu_id AS owner FROM files WHERE id = ?1')
+		.bind(id)
+		.first<{ owner: number | null }>();
+	if (!row) return json({ error: 'not_found' }, { status: 404 });
+
+	// 文件级所有权：owner NULL（系统导入）对任何登录用户都不等，天然仅管理员可动
+	if (row.owner !== g.session.osuId && !(await isAdmin(g.env.DB, g.secrets, g.session.osuId))) {
+		return json({ error: 'forbidden' }, { status: 403 });
+	}
+
+	await g.env.DB.prepare('UPDATE files SET name = ?1 WHERE id = ?2').bind(trimmed, id).run();
+	return json({ ok: true });
 };

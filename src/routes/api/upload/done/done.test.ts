@@ -38,14 +38,15 @@ async function addFile(
 	hash: string,
 	folder = '',
 	format = 'wav',
-	size = 100
+	size = 100,
+	owner: number | null = UID
 ) {
 	await db()
 		.prepare(
-			`INSERT INTO files (id, package_id, folder_path, name, format, size_bytes, blob_hash)
-			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
+			`INSERT INTO files (id, package_id, folder_path, name, format, size_bytes, blob_hash, owner_osu_id)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
 		)
-		.bind(crypto.randomUUID(), pkg, folder, name, format, size, hash)
+		.bind(crypto.randomUUID(), pkg, folder, name, format, size, hash, owner)
 		.run();
 }
 
@@ -176,6 +177,11 @@ describe('POST /api/upload/done', () => {
 			.bind(h(1))
 			.first<{ r: number }>();
 		expect(r?.r).toBe(1);
+		// 合并只迁 package_id：文件级 owner 保留（= 影子包上传者，即附加者本人）
+		const migrated = await db()
+			.prepare(`SELECT owner_osu_id AS o FROM files WHERE package_id = 'T' AND name = 'c.wav'`)
+			.first<{ o: number | null }>();
+		expect(migrated?.o).toBe(UID);
 	});
 
 	it('他人包 / 不存在包 → 404 package_not_found', async () => {

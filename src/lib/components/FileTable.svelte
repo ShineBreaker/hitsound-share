@@ -2,9 +2,10 @@
 	// 文件表：列 = 播放指示+文件名 / 格式 / 时长 / 采样率 / 采样深度 / 声道 / 波形 / 下载
 	// 文件名含 # 空格 & 逗号为常态，{f.name} 文本插值（Svelte 默认转义）；
 	// URL 一律 encodeURIComponent（id 为 uuid，防御性编码）
+	// 文件名 cell：上传者可管（文件级 owner / 管理员）hover 出笔形钮行内改名
 	import type { FileRow } from '$lib/types';
 	import { t } from '$lib/i18n';
-	import { fetchPeaks, DND_FILE_MIME, type KitDragData } from '$lib/api';
+	import { canManage, fetchPeaks, DND_FILE_MIME, type KitDragData, type Me } from '$lib/api';
 	import { selection } from '$lib/selection.svelte';
 	import type { KitFile } from '$lib/kit.svelte';
 	import WaveformCanvas from './WaveformCanvas.svelte';
@@ -17,14 +18,63 @@
 		paused?: boolean;
 		/** 当前播放进度 0-1（仅播放行传入 WaveformCanvas） */
 		progress?: number;
+		me?: Me;
 		onplay?: (file: FileRow) => void;
 		onseek?: (file: FileRow, ratio: number) => void;
+		/** 提交行内改名（file + 新名），返回是否成功；失败保持编辑态 */
+		onrename?: (file: FileRow, name: string) => Promise<boolean>;
 	}
-	let { files, playingId = null, paused = true, progress = 0, onplay, onseek }: Props = $props();
+	let {
+		files,
+		playingId = null,
+		paused = true,
+		progress = 0,
+		me = { loggedIn: false },
+		onplay,
+		onseek,
+		onrename
+	}: Props = $props();
 
 	/** FileRow → 入格载荷（只带所需三字段） */
 	function toKitFile(f: FileRow): KitFile {
 		return { id: f.id, name: f.name, format: f.format };
+	}
+
+	// 行内改名：表内 editingId 互斥（Enter 提交 / Esc 取消 / blur 放弃；失败红框保输入）
+	let editingId = $state('');
+	let editValue = $state('');
+	let submitting = $state(false);
+	let failed = $state(false);
+
+	function canRename(f: FileRow): boolean {
+		return onrename != null && canManage(me, f.ownerOsuId);
+	}
+
+	function nameTitle(f: FileRow): string {
+		return f.ownerName ? `${f.name}\n${t('file.owner')}: ${f.ownerName}` : f.name;
+	}
+
+	function startEdit(f: FileRow): void {
+		editValue = f.name;
+		failed = false;
+		editingId = f.id;
+	}
+
+	async function submitEdit(f: FileRow): Promise<void> {
+		const name = editValue.trim();
+		if (submitting) return;
+		if (!name || name === f.name) {
+			editingId = '';
+			return;
+		}
+		submitting = true;
+		const ok = (await onrename?.(f, name)) ?? true;
+		submitting = false;
+		if (ok) editingId = '';
+		else {
+			failed = true;
+			setTimeout(() => (failed = false), 1500);
+		}
 	}
 
 	// 表头全选框：全选当前已加载行 / 有选中则取消
@@ -172,12 +222,50 @@
 								}}
 							></button>
 						</td>
-						<td class="col-name" title={f.name}>
-							{#if f.id === playingId}
-								<!-- 播放指示：三根跳动条（暂停时静止） -->
-								<span class="eq" class:paused aria-hidden="true"><i></i><i></i><i></i></span>
+						<td class="col-name" title={nameTitle(f)}>
+							{#if editingId === f.id}
+								<input
+									class="edit"
+									class:failed
+									bind:value={editValue}
+									disabled={submitting}
+									maxlength="100"
+									title={failed ? t('rename.failed') : undefined}
+									onclick={(e) => e.stopPropagation()}
+									onkeydown={(e) => {
+										// 阻止冒泡到行（Enter/Space 会触发行播放）
+										e.stopPropagation();
+										if (e.key === 'Enter') void submitEdit(f);
+										else if (e.key === 'Escape') editingId = '';
+									}}
+									onblur={() => {
+										// blur 即放弃（点击他处/Tab）；Enter 提交，Esc 取消
+										if (editingId === f.id) editingId = '';
+									}}
+								/>
+							{:else}
+								<div class="name-cell">
+									{#if f.id === playingId}
+										<!-- 播放指示：三根跳动条（暂停时静止） -->
+										<span class="eq" class:paused aria-hidden="true"><i></i><i></i><i></i></span>
+									{/if}
+									<span class="fname">{f.name}</span>
+									{#if canRename(f)}
+										<button
+											class="rn"
+											title={t('action.rename')}
+											aria-label={t('action.rename')}
+											onclick={(e) => {
+												e.stopPropagation();
+												startEdit(f);
+											}}
+										>
+											<!-- 与树节点改名同款笔形（Comfortaa 无 ✎ 字形） -->
+											<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+										</button>
+									{/if}
+								</div>
 							{/if}
-							{f.name}
 						</td>
 						<td class="col-num"><span class="fmt">{f.format.toUpperCase()}</span></td>
 						<td class="col-num tnum">{fmtDuration(f.durationS)}</td>
@@ -322,11 +410,82 @@
 	.col-name {
 		max-width: 320px;
 		overflow: hidden;
-		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	td.col-name {
 		color: var(--text);
+	}
+	/* 名字 cell 内布局：指示条 + 文件名（截断）+ 行内改名笔形钮 */
+	.name-cell {
+		display: flex;
+		align-items: center;
+		min-width: 0;
+	}
+	.fname {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	/* 行内改名输入：占满名字 cell，与树节点改名同风格 */
+	.edit {
+		box-sizing: border-box;
+		width: 100%;
+		min-width: 0;
+		padding: 3px 8px;
+		border: 1px solid var(--accent);
+		border-radius: var(--radius);
+		background: var(--bg-inset);
+		color: var(--text);
+		font-family: inherit;
+		font-size: 13px;
+	}
+	.edit:focus {
+		outline: none;
+	}
+	.edit:disabled {
+		opacity: 0.6;
+	}
+	/* 提交失败：红框 1.5s 提示（保持编辑态，输入不丢） */
+	.edit.failed {
+		border-color: var(--accent-pink);
+	}
+
+	/* 行内改名钮：与下载钮同款 hover 浮现，触屏常显（DESIGN.md） */
+	.rn {
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		margin-left: 2px;
+		padding: 0;
+		border: none;
+		border-radius: var(--radius);
+		background: transparent;
+		color: var(--text-faint);
+		cursor: pointer;
+		opacity: 0;
+		transition: opacity 0.15s ease;
+	}
+	.rn svg {
+		width: 13px;
+		height: 13px;
+	}
+	tr:hover .rn,
+	tr.playing .rn,
+	.rn:focus-visible {
+		opacity: 1;
+	}
+	@media (hover: none) {
+		.rn {
+			opacity: 1;
+		}
+	}
+	.rn:hover {
+		background: var(--bg-l3);
+		color: var(--accent-bright);
 	}
 
 	.col-num {

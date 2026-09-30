@@ -23,6 +23,7 @@ const zh = {
 	'file.bitDepth': '采样深度',
 	'file.channels': '声道',
 	'file.waveform': '波形',
+	'file.owner': '上传者',
 
 	// 文件表状态
 	'table.empty': '该文件夹没有文件',
