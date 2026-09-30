@@ -88,5 +88,5 @@ _Avoid_: 谱面包、地图包、上传包
 _Avoid_: 合并、替换上传
 
 **实时预览（osu!cad）**:
-谱面集栏「实时预览」打开悬浮窗，内嵌 `/osucad/`（osucad 仓库 `apps/hitsound-preview` 的静态构建产物，经 `scripts/build-osucad-preview.sh` 生成并提交入库）——同源 iframe + postMessage 协议（`hs:*` 入 / `cad:*` 出），`cad.svelte.ts` 是唯一桥接入口。推送内容 = `osz.buildBytes` 的当前合并包（与导出 .osz 同一产物）；格子/谱面集变化防抖重发 `hs:update`，iframe 内重建 Skin 触发 `sourceChanged` 完成热刷新，不重载页面、保留播放位置。谱面、音效、note 在 osu!cad 规则集自动游玩下联动预览。
+谱面集栏「实时预览」打开悬浮窗，内嵌 `/osucad/`（osucad 仓库 `apps/hitsound-preview` 的静态构建产物，经 `scripts/build-osucad-preview.sh` 生成并提交入库；仓库拓扑/更新流程/调试见 `docs/osucad.md`）——同源 iframe + postMessage 协议（`hs:*` 入 / `cad:*` 出），`cad.svelte.ts` 是唯一桥接入口。推送内容 = `osz.buildBytes` 的当前合并包（与导出 .osz 同一产物）；格子/谱面集变化防抖重发 `hs:update`，iframe 内重建 Skin 触发 `sourceChanged` 完成热刷新，不重载页面、保留播放位置。谱面、音效、note 在 osu!cad 规则集自动游玩下联动预览。
 _Avoid_: 编辑器、导入编辑器
