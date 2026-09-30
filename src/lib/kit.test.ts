@@ -48,6 +48,16 @@ describe('Kit', () => {
 		expect(k.entries).toEqual([]);
 	});
 
+	it('滑条列按 <行>-<列><序号> 命名（sliderslide/slidertick）', () => {
+		k.addNumbered('drum/sliderslide', [f('a'), f('b')]);
+		k.add('normal/slidertick', f('c'));
+		expect(k.entries.map((e) => e.target)).toEqual([
+			'normal-slidertick.wav',
+			'drum-sliderslide0.wav',
+			'drum-sliderslide1.wav'
+		]);
+	});
+
 	it('dupTargets 标出 zip 内重名（含序号冲突）', () => {
 		k.add('normal/hitnormal', f('a')); // normal-hitnormal.wav
 		k.addNumbered('normal/hitnormal', [f('b')]); // normal-hitnormal0.wav
@@ -73,25 +83,31 @@ describe('cellForKey', () => {
 	});
 	afterEach(() => vi.unstubAllGlobals());
 
-	it('12 个物理键全部映射到对应格子', () => {
+	it('18 个物理键全部映射到对应格子（滑条两列在行尾）', () => {
 		const map: Record<string, string> = {
 			KeyQ: 'normal/hitnormal',
 			KeyW: 'normal/hitwhistle',
 			KeyE: 'normal/hitfinish',
 			KeyR: 'normal/hitclap',
+			KeyT: 'normal/sliderslide',
+			KeyY: 'normal/slidertick',
 			KeyA: 'soft/hitnormal',
 			KeyS: 'soft/hitwhistle',
 			KeyD: 'soft/hitfinish',
 			KeyF: 'soft/hitclap',
+			KeyG: 'soft/sliderslide',
+			KeyH: 'soft/slidertick',
 			KeyZ: 'drum/hitnormal',
 			KeyX: 'drum/hitwhistle',
 			KeyC: 'drum/hitfinish',
-			KeyV: 'drum/hitclap'
+			KeyV: 'drum/hitclap',
+			KeyB: 'drum/sliderslide',
+			KeyN: 'drum/slidertick'
 		};
 		for (const [code, want] of Object.entries(map)) {
 			expect(cellForKey(ev(code)), code).toBe(want);
 		}
-		expect(cellForKey(ev('KeyB'))).toBeNull();
+		expect(cellForKey(ev('KeyM'))).toBeNull();
 	});
 
 	it('修饰键 / 输入目标 / 模态在场时返回 null', () => {

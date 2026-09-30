@@ -4,7 +4,14 @@
 // 「第一次拖不进格子」的根因）。所有写入一律整列重赋值或经 `cells[k]` 复读出的代理。
 
 export const KIT_ROWS = ['normal', 'soft', 'drum'] as const;
-export const KIT_COLS = ['hitnormal', 'hitwhistle', 'hitfinish', 'hitclap'] as const;
+export const KIT_COLS = [
+	'hitnormal',
+	'hitwhistle',
+	'hitfinish',
+	'hitclap',
+	'sliderslide',
+	'slidertick'
+] as const;
 export type KitRow = (typeof KIT_ROWS)[number];
 export type KitCol = (typeof KIT_COLS)[number];
 export type CellKey = `${KitRow}/${KitCol}`;
@@ -26,20 +33,26 @@ export interface KitEntry {
 	target: string; // <行>-<列><序号>.<格式>
 }
 
-// 物理键位 → 格子（e.code 与键盘布局无关）：QWER=normal 行，ASDF=soft 行，ZXCV=drum 行
+// 物理键位 → 格子（e.code 与键盘布局无关）：QWERTY=normal 行，ASDFGH=soft 行，ZXCVBN=drum 行
 export const CELL_KEYS: Record<string, CellKey> = {
 	KeyQ: 'normal/hitnormal',
 	KeyW: 'normal/hitwhistle',
 	KeyE: 'normal/hitfinish',
 	KeyR: 'normal/hitclap',
+	KeyT: 'normal/sliderslide',
+	KeyY: 'normal/slidertick',
 	KeyA: 'soft/hitnormal',
 	KeyS: 'soft/hitwhistle',
 	KeyD: 'soft/hitfinish',
 	KeyF: 'soft/hitclap',
+	KeyG: 'soft/sliderslide',
+	KeyH: 'soft/slidertick',
 	KeyZ: 'drum/hitnormal',
 	KeyX: 'drum/hitwhistle',
 	KeyC: 'drum/hitfinish',
-	KeyV: 'drum/hitclap'
+	KeyV: 'drum/hitclap',
+	KeyB: 'drum/sliderslide',
+	KeyN: 'drum/slidertick'
 };
 
 // 反查：格子 → 键帽字母（选中文件后格角显示的快捷提示）

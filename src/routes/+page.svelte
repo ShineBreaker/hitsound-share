@@ -301,7 +301,7 @@
 		// 登录态：树节点改名按钮的显示判定（失败按未登录处理）
 		void fetchMe().then((m) => (me = m));
 
-		// 全局键：Esc 清多选（无模态且不在输入中时）；Q–V 把选中文件放入对应格子
+		// 全局键：Esc 清多选（无模态且不在输入中时）；格子快捷键把选中文件放入对应格子
 		// （cellForKey 内部已处理修饰键/输入框/模态判定；对话框与引导浮层都带 aria-modal）
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') {
@@ -400,7 +400,7 @@
 			{/if}
 		</div>
 
-		<!-- 多选条：有选中时显示；按 Q–V 或点组装格子批量入格（选中跨文件夹保留） -->
+		<!-- 多选条：有选中时显示；按格子快捷键或点组装格子批量入格（选中跨文件夹保留） -->
 		{#if selection.size > 0}
 			<div class="selbar" role="status">
 				<span class="selbar-text">{t('sel.bar', { count: selection.size })}</span>

@@ -2,7 +2,7 @@
 	// 自定义音效组悬浮面板（命名 <行>-<列><序号>.<格式>，如 drum-hitnormal2.wav）：
 	// 收起态 = 右下角悬浮钮（GitHub 反馈钮旁），展开态 = 右下角浮层面板；
 	// 文件表行可拖入格子（DND_FILE_MIME 自定义类型，拖起时面板自动展开）；
-	// 选中文件后点格子 / 按 Q–V 也可批量入格（assignSelection）；
+	// 选中文件后点格子 / 按 Q–Y、A–H、Z–N 也可批量入格（assignSelection）；
 	// 「打包下载」按当前格子内容实时拉 /f/<id> 全量（同 id 去重）→ fflate 流式 STORE 拼 zip → 保存（$lib/zip-save）
 	// 格子内容/序号规则/键位映射/开面态都在 $lib/kit.svelte.ts（kit 单例），本组件只管渲染与事件接线
 	import { onMount } from 'svelte';
@@ -459,7 +459,7 @@
 				<div class="rowhead">{row}</div>
 				{#each KIT_COLS as col (col)}
 					{@const key = cellKey(row, col)}
-					<!-- 格子点击 = 多选入格的便捷路径；键盘等价物是 Q–V 快捷键（cellForKey），
+					<!-- 格子点击 = 多选入格的便捷路径；键盘等价物是格子快捷键（cellForKey），
 					     div 无法用 button 替代（内部含可交互 chip） -->
 					<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 					<div
@@ -758,7 +758,7 @@
 		right: 16px;
 		bottom: calc(68px + env(safe-area-inset-bottom, 0px));
 		z-index: 60;
-		width: min(760px, calc(100vw - 32px));
+		width: min(980px, calc(100vw - 32px));
 		max-height: min(430px, calc(100vh - 150px));
 		display: flex;
 		flex-direction: column;
@@ -835,7 +835,7 @@
 
 	.kit-grid {
 		display: grid;
-		grid-template-columns: 64px repeat(4, minmax(140px, 1fr));
+		grid-template-columns: 64px repeat(6, minmax(100px, 1fr));
 		grid-template-rows: auto repeat(3, minmax(66px, auto));
 		gap: 6px;
 		padding: 8px 12px 12px;
@@ -901,7 +901,7 @@
 		background: color-mix(in srgb, var(--accent) 22%, var(--bg-l3));
 	}
 
-	/* 多选时格角键帽字母：Q–V 只在键鼠（可悬停+精指针）设备有意义，
+	/* 多选时格角键帽字母：快捷键只在键鼠（可悬停+精指针）设备有意义，
 	   触屏入格走点格子路径，不显示以免误导 */
 	.keycap {
 		position: absolute;
@@ -1070,15 +1070,15 @@
 			display: none;
 		}
 		.kit-grid {
-			grid-template-columns: 44px repeat(4, minmax(120px, 140px));
+			grid-template-columns: 44px repeat(6, minmax(104px, 130px));
 		}
 	}
 
-	/* 超窄屏（≤480）：4 列全部挤进视口、格子区不再横向滚动；
+	/* 超窄屏（≤480）：6 列全部挤进视口、格子区不再横向滚动；
 	   chip 改两行网格，播放/序号/×都保 ≥28px 触点，名字让位省略号 */
 	@media (max-width: 480px) {
 		.kit-grid {
-			grid-template-columns: 44px repeat(4, minmax(0, 1fr));
+			grid-template-columns: 44px repeat(6, minmax(0, 1fr));
 			grid-template-rows: auto repeat(3, minmax(62px, auto));
 			gap: 4px;
 			padding: 6px 8px 10px;

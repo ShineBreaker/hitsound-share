@@ -1,5 +1,5 @@
 // 文件表多选状态（跨文件夹翻页保持）：Ctrl/⌘ 点击 toggle、Shift 点击连选、复选框勾选；
-// 选好后按 Q–V 或点击组装面板格子批量入格（assignSelection）
+// 选好后按 Q–Y/A–H/Z–N 或点击组装面板格子批量入格（assignSelection）
 import { kit, type CellKey, type KitFile } from './kit.svelte';
 import { t } from './i18n';
 

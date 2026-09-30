@@ -1,5 +1,5 @@
 <script lang="ts">
-	// 帮助对话框：顶栏「?」/ ? 键打开。分节说明 + 3×4 键位图 + 手势表 + 重开引导
+	// 帮助对话框：顶栏「?」/ ? 键打开。分节说明 + 3×6 键位图 + 手势表 + 重开引导
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
 	import type { Dict } from '$lib/i18n/zh';
@@ -58,7 +58,7 @@
 
 		<section>
 			<h3>{t('help.keymap.title')}</h3>
-			<!-- 3×4 键位图：行 = normal/soft/drum，列 = hitnormal…hitclap -->
+			<!-- 3×6 键位图：行 = normal/soft/drum，列 = hitnormal…slidertick -->
 			<div class="keymap">
 				<div class="corner"></div>
 				{#each KIT_COLS as col (col)}
@@ -143,7 +143,7 @@
 	/* 键位图：格子带键帽字母 + 目标名 */
 	.keymap {
 		display: grid;
-		grid-template-columns: 52px repeat(4, 1fr);
+		grid-template-columns: 52px repeat(6, 1fr);
 		gap: 5px;
 		margin-top: 4px;
 	}
@@ -214,7 +214,7 @@
 			padding: 14px;
 		}
 		.keymap {
-			grid-template-columns: 44px repeat(4, 1fr);
+			grid-template-columns: 44px repeat(6, 1fr);
 		}
 	}
 </style>
