@@ -81,6 +81,7 @@ export class Cad {
 	#pushing = false; // flush 进行中（新 invalidate 合并进循环）
 	#sent = 0; // 已推送包数：0 → 下一条 hs:load，否则 hs:update
 	#wantedDifficulty: number | null = null; // 用户选过的难度下标，重开后按此恢复
+	#resumePending = false; // 因热更新构建暂停了预览，等 cad:loaded 后自动恢复播放
 
 	constructor(deps: CadDeps) {
 		this.#deps = deps;
@@ -102,7 +103,8 @@ export class Cad {
 		this.playing = false;
 		this.error = '';
 		this.#dirty = false;
-		byteCache.clear(); // 预览关闭即释放缓存的格子字节
+		this.#resumePending = false; // iframe 随关闭卸载，恢复目标不存在
+		byteCache.trim(); // 关闭只缩容不清空：热格子驻留，重开预览免重拉
 		// 关闭即卸载 iframe（组件 {#if}）→ 下次打开是新引擎，重新走 hs:load
 		this.#sent = 0;
 		this.frame = null;
@@ -121,6 +123,17 @@ export class Cad {
 		try {
 			while (this.#dirty && this.open && this.ready) {
 				this.#dirty = false;
+				// 播放中改格子：buildBytes（CRC 冷路径）与 iframe 内重解析共占主线程，
+				// 冻结期间 Web Audio 音乐照走、恢复帧快照大跳 → 错拍爆音。
+				// 先把预览暂停（音乐停，冻结窗口挪到暂停态），cad:loaded 回来后恢复。
+				if (this.playing && !this.#resumePending) {
+					this.#resumePending = true;
+					this.control('pause');
+					// 让出一个 task 边界再构建：pause 消息要先被 iframe 处理掉，
+					// 宿主才能开始冻结主线程，否则两边冻结在一起 pause 不生效
+					await new Promise((r) => setTimeout(r, 0));
+					if (!this.open || !this.ready) break;
+				}
 				const bytes = await this.#deps.buildBytes();
 				if (!this.open || !this.ready) break;
 				this.#deps.send({
@@ -132,6 +145,12 @@ export class Cad {
 			}
 		} catch (e) {
 			this.error = e instanceof Error ? e.message : String(e);
+			// 构建失败时没有 hs:update、也就不会有 cad:loaded，
+			// 悬挂的自动恢复就地兑现（用户在暂停态看到错误提示）
+			if (this.#resumePending) {
+				this.#resumePending = false;
+				this.control('play');
+			}
 		} finally {
 			this.#pushing = false;
 		}
@@ -162,6 +181,12 @@ export class Cad {
 					this.#wantedDifficulty < data.meta.difficulties.length
 				) {
 					this.selectDifficulty(this.#wantedDifficulty);
+				}
+				// 热更新前因构建暂停的预览在此恢复（位置由 iframe 保留）；
+				// 暂停态收 hs:update 的不在此列——没有挂起的恢复
+				if (this.#resumePending && this.open && this.ready) {
+					this.#resumePending = false;
+					this.control('play');
 				}
 				break;
 			case 'cad:time':
@@ -218,20 +243,75 @@ function readVolume(key: string): number {
 	}
 }
 
+/** 格子字节缓存总上限：2400 文件大包全入格时无上限会驻留数百 MB 只增不减，
+ *  128MB 封顶后热格子（常听的几十个音源）驻留、重开预览免重拉；
+ *  被逐出的 id 重开预览经 /f/<id> 的 immutable 磁盘缓存重取 + CRC 重算
+ *  （WeakMap 按对象身份失效）——用可控的缓存栈成本换内存封顶 */
+const BYTE_CACHE_CAP = 128 * 1024 * 1024;
+
+/** 字节缓存（对齐 api.ts peaks 缓先例）：Map 插入序即 LRU 序（最旧在前），
+ *  命中 delete+set 刷新位；同 id 并发请求合并为同一在途 Promise；
+ *  超上限从最旧逐出。工厂注入 fetchBytes 与上限，供 cad.test.ts 直测 */
+export function createByteCache(
+	fetchBytes: (id: string) => Promise<Uint8Array>,
+	capBytes: number
+) {
+	const cache = new Map<string, Uint8Array>();
+	const inflight = new Map<string, Promise<Uint8Array>>();
+	let total = 0; // 常驻字节数（set 加 / 逐出减，免每次全表求和）
+
+	function trim(): void {
+		for (const [k, v] of cache) {
+			if (total <= capBytes) break;
+			if (inflight.has(k)) continue; // 在途豁免：条目正被并发读取共享
+			cache.delete(k);
+			total -= v.byteLength;
+		}
+	}
+
+	async function load(id: string): Promise<Uint8Array> {
+		const hit = cache.get(id);
+		if (hit) {
+			cache.delete(id); // LRU：命中移到最新位
+			cache.set(id, hit);
+			return hit;
+		}
+		const pending = inflight.get(id);
+		if (pending) return pending;
+		const p = (async () => {
+			const bytes = await fetchBytes(id);
+			inflight.delete(id); // 完成即摘除：紧随的 trim 不得把「刚完成的自己」当在途豁免
+			cache.set(id, bytes);
+			total += bytes.byteLength;
+			trim();
+			return bytes;
+		})().finally(() => inflight.delete(id)); // 失败路径兜底（幂等）
+		inflight.set(id, p);
+		return p;
+	}
+
+	return {
+		load,
+		trim,
+		get size(): number {
+			return cache.size;
+		},
+		get bytes(): number {
+			return total;
+		}
+	};
+}
+
 /** 格子项音源：/f/<id> 全量拉取（与 osz 导出共用口径）。
  *  按 id 缓存字节：files.id 是文件行 id（内容不变），预览热更新反复重建
- *  时未变的格子项不再走网络栈（S7）；clear() 时随预览关闭清空。 */
-const byteCache = new Map<string, Uint8Array>();
-
-async function loadFileBytes(id: string): Promise<Uint8Array> {
-	const hit = byteCache.get(id);
-	if (hit) return hit;
+ *  时未变的格子项不再走网络栈（S7）；LRU 封顶（BYTE_CACHE_CAP）。 */
+const byteCache = createByteCache(async (id) => {
 	const r = await fetch(`/f/${encodeURIComponent(id)}`);
 	if (!r.ok) throw new Error(`HTTP ${r.status}`);
-	const bytes = new Uint8Array(await r.arrayBuffer());
-	byteCache.set(id, bytes);
-	return bytes;
-}
+	return new Uint8Array(await r.arrayBuffer());
+}, BYTE_CACHE_CAP);
+
+const loadFileBytes = (id: string) => byteCache.load(id);
 
 export const cad = new Cad({
 	buildBytes: () => osz.buildBytes(kit.entries, loadFileBytes),

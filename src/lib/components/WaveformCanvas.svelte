@@ -6,6 +6,44 @@
 	//   首次进入视口（含 100px 预载边距）触发上层按需拉取 peaks
 	import { onMount } from 'svelte';
 
+	// 模块级共享 observer：FileTable 2400+ 行时每行 canvas 各建一对
+	// IO/RO = 4800 个实例（回调调度与内存随行数放大）。共享后实例数恒为 2，
+	// 回调按 WeakMap<canvas, cb> 路由——canvas 经弱引用作键，即使漏 unobserve
+	// 也不阻止组件回收；unmount 时的 unobserve 是确定性清理（不留回调人口）
+	let sharedIO: IntersectionObserver | null = null;
+	let sharedRO: ResizeObserver | null = null;
+	const visibleCbs = new WeakMap<Element, (visible: boolean) => void>();
+	const resizeCbs = new WeakMap<Element, () => void>();
+
+	function observeVisible(el: Element, cb: (visible: boolean) => void): void {
+		sharedIO ??= new IntersectionObserver(
+			(entries) => {
+				for (const e of entries) visibleCbs.get(e.target)?.(e.isIntersecting);
+			},
+			{ rootMargin: '100px' }
+		);
+		visibleCbs.set(el, cb);
+		sharedIO.observe(el);
+	}
+
+	function unobserveVisible(el: Element): void {
+		sharedIO?.unobserve(el);
+		visibleCbs.delete(el);
+	}
+
+	function observeResize(el: Element, cb: () => void): void {
+		sharedRO ??= new ResizeObserver((entries) => {
+			for (const e of entries) resizeCbs.get(e.target)?.();
+		});
+		resizeCbs.set(el, cb);
+		sharedRO.observe(el);
+	}
+
+	function unobserveResize(el: Element): void {
+		sharedRO?.unobserve(el);
+		resizeCbs.delete(el);
+	}
+
 	interface Props {
 		peaks?: number[] | null;
 		progress?: number;
@@ -70,32 +108,25 @@
 		colBright = cs.getPropertyValue('--accent-bright').trim() || colBright;
 		colAccent = cs.getPropertyValue('--accent').trim() || colAccent;
 		// 容器宽度变化（窗口缩放）时重绘
-		const ro = new ResizeObserver(() => draw());
-		ro.observe(canvas!);
+		observeResize(canvas!, () => draw());
 		let peaksFetched = false;
-		// 进入视口拉 peaks+重绘，离开即清零位图释放显存
-		const io = new IntersectionObserver(
-			(entries) => {
-				for (const e of entries) {
-					if (e.isIntersecting) {
-						inView = true;
-						if (!peaksFetched) {
-							peaksFetched = true;
-							onvisible?.(); // peaks 只需首见拉一次
-						}
-						draw();
-					} else {
-						inView = false;
-						if (canvas) canvas.width = 0; // 释放离屏位图
-					}
+		// 进入视口拉 peaks+重绘，离开即清零位图释放显存（100px 预载语义不变）
+		observeVisible(canvas!, (visible) => {
+			if (visible) {
+				inView = true;
+				if (!peaksFetched) {
+					peaksFetched = true;
+					onvisible?.(); // peaks 只需首见拉一次
 				}
-			},
-			{ rootMargin: '100px' }
-		);
-		io.observe(canvas!);
+				draw();
+			} else {
+				inView = false;
+				if (canvas) canvas.width = 0; // 释放离屏位图
+			}
+		});
 		return () => {
-			ro.disconnect();
-			io.disconnect();
+			unobserveResize(canvas!);
+			unobserveVisible(canvas!);
 		};
 	});
 </script>

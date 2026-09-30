@@ -349,6 +349,13 @@
 	tbody tr {
 		cursor: pointer;
 		user-select: none; /* 防止 Shift/Ctrl 连点选中整页文本 */
+		/* 长表行级渲染裁剪（试点）：离屏行由浏览器跳过子树渲染，进视口自动
+		   恢复（与 WaveformCanvas 的 IO 释放互补：一个省 paint，一个省位图）。
+		   auto 关键字让 Chromium 记忆已渲染行的真实尺寸、以 47px 为冷启动
+		   估值（行内最高元素 = 波形 36px + td 上下 padding 5px×2 + 行边框 1px），
+		   把 contain-intrinsic-size 估值与实际行高的偏差压到首渲染一次 */
+		content-visibility: auto;
+		contain-intrinsic-size: auto 47px;
 	}
 	tbody tr:hover td {
 		background: color-mix(in srgb, var(--bg-l3) 55%, transparent);
@@ -621,6 +628,10 @@
 		td {
 			padding-top: 10px;
 			padding-bottom: 10px;
+		}
+		/* 窄屏行高更大（触控 padding 10px×2）：同步抬高行级裁剪的冷启动估值 */
+		tbody tr {
+			contain-intrinsic-size: auto 57px;
 		}
 		tbody tr {
 			min-height: 44px;

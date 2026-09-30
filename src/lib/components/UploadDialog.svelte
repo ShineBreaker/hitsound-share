@@ -211,9 +211,14 @@
 			},
 			onPipelineEvent
 		);
+		// done/error 后源字节不再有读者（模板只读日志/配额/文案，error 的
+		// 「重试」= reset 重选）：立即释放，用户停在完成页看配额/日志期间
+		// 不再常驻全量解压字节（大包数百 MB）
+		prepared = null;
 		phase = 'done';
 		void loadSite(); // 配额已消耗，刷新今日用量
 	} catch (err) {
+			prepared = null;
 			fail(err instanceof UploadError ? err.code : 'network');
 		}
 	}

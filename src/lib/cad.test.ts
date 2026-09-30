@@ -1,6 +1,7 @@
 // Cad 预览桥：open→ready→load→update 状态机 + 推送合并（dirty 并发归并）
+// + 格子字节缓存 LRU（createByteCache，注入 fetchBytes 直测）
 import { describe, it, expect, vi } from 'vitest';
-import { Cad, type CadDeps } from './cad.svelte';
+import { Cad, createByteCache, type CadDeps } from './cad.svelte';
 
 const bytes = (n: number) => new Uint8Array([n]);
 
@@ -42,6 +43,64 @@ describe('Cad', () => {
 		cad.invalidate();
 		await tick();
 		expect(sent.at(-1)).toMatchObject({ type: 'hs:update' });
+	});
+
+	const meta = {
+		title: 'T', artist: 'A', version: 'V', creator: 'C',
+		duration: 60000, objects: 5, hasAudio: true, beatmapFile: 'a.osu',
+		difficulties: ['V'], difficultyIndex: 0
+	};
+	const label = (m: unknown) => {
+		const t = m as { type: string; action?: string };
+		return t.action ? `${t.type}:${t.action}` : t.type;
+	};
+
+	it('播放中热更新：先暂停再构建，cad:loaded 后自动恢复播放', async () => {
+		const { cad, sent } = setup();
+		cad.openPreview();
+		ready(cad);
+		await tick();
+
+		// 播放中改格子（cad:time 上报 playing）
+		cad.onMessage({ type: 'cad:time', time: 1234, duration: 60000, playing: true });
+		sent.length = 0;
+
+		cad.invalidate();
+		await tick();
+		await tick();
+		await tick();
+
+		const labels = sent.map(label);
+		// 暂停必须发生在构建推送之前（冻结窗口挪到暂停态）
+		expect(labels.indexOf('hs:control:pause')).toBeGreaterThanOrEqual(0);
+		expect(labels.indexOf('hs:update')).toBeGreaterThan(labels.indexOf('hs:control:pause'));
+
+		// 构建失败路径之外不提前恢复；cad:loaded 到达后恢复播放，且在 hs:update 之后
+		cad.onMessage({ type: 'cad:loaded', meta });
+		const plays = sent.filter(m => label(m) === 'hs:control:play');
+		expect(plays).toHaveLength(1);
+		expect(sent.indexOf(plays[0])).toBeGreaterThan(labels.indexOf('hs:update'));
+	});
+
+	it('暂停态热更新：不自动暂停也不自动恢复（保持暂停、位置保留）', async () => {
+		const { cad, sent } = setup();
+		cad.openPreview();
+		ready(cad);
+		await tick();
+
+		// 暂停态（cad:time 上报 playing=false）
+		cad.onMessage({ type: 'cad:time', time: 1234, duration: 60000, playing: false });
+		sent.length = 0;
+
+		cad.invalidate();
+		await tick();
+		await tick();
+
+		expect(sent.map(label)).toContain('hs:update');
+		expect(sent.filter(m => label(m) === 'hs:control:pause')).toHaveLength(0);
+
+		cad.onMessage({ type: 'cad:loaded', meta });
+		expect(sent.filter(m => label(m) === 'hs:control:play')).toHaveLength(0);
 	});
 
 	it('构建期间的连续改动合并为一次推送（dirty 归并）', async () => {
@@ -203,5 +262,91 @@ describe('Cad', () => {
 		cad.onMessage(null);
 		cad.onMessage('cad:ready'); // 非对象
 		expect(cad.ready).toBe(false);
+	});
+});
+
+describe('createByteCache（格子字节缓存 LRU）', () => {
+	const bytes = (n: number) => new Uint8Array(n);
+
+	it('超上限从最旧逐出；被逐出的 id 重拉走 fetch', async () => {
+		const fetched: string[] = [];
+		const c = createByteCache(
+			async (id) => {
+				fetched.push(id);
+				return bytes(60);
+			},
+			100
+		);
+		await c.load('a');
+		await c.load('b'); // 60+60 > 100 → 逐出最旧 a
+		expect(c.size).toBe(1);
+		expect(c.bytes).toBe(60);
+		await c.load('a'); // 已逐出 → 重新 fetch
+		expect(fetched).toEqual(['a', 'b', 'a']);
+	});
+
+	it('命中刷新 LRU 位：新近访问的不被逐出', async () => {
+		const fetched: string[] = [];
+		const c = createByteCache(
+			async (id) => {
+				fetched.push(id);
+				return bytes(id === 'a' ? 60 : id === 'b' ? 30 : 40);
+			},
+			100
+		);
+		await c.load('a');
+		await c.load('b'); // 90 ≤ 100
+		await c.load('a'); // 命中刷新位（不再 fetch）
+		await c.load('c'); // 130 > 100 → 逐出最旧的 b，a 因刷新保留
+		expect(fetched.filter((x) => x === 'a')).toHaveLength(1); // a 未重拉
+		expect(fetched.filter((x) => x === 'b')).toHaveLength(1);
+		expect(c.size).toBe(2);
+		expect(c.bytes).toBe(100);
+	});
+
+	it('同 id 并发合并为一次请求；在途完成登记不受期间逐出干扰', async () => {
+		let resolveA!: (v: Uint8Array) => void;
+		const fetched: string[] = [];
+		const c = createByteCache(
+			(id) =>
+				new Promise<Uint8Array>((resolve) => {
+					fetched.push(id);
+					if (id === 'a') resolveA = resolve;
+					else resolve(bytes(80));
+				}),
+			100
+		);
+		const pa1 = c.load('a'); // 挂起在途
+		const pa2 = c.load('a'); // 并发共享同一在途 Promise
+		await c.load('b'); // 期间完成另一条目（a 在途无条目可逐）
+		resolveA(bytes(50)); // a 完成：登记 50 → 130 > 100 → 逐出 b
+		const [r1, r2] = await Promise.all([pa1, pa2]);
+		expect(r1).toBe(r2); // 同一字节对象（合并而非双拉）
+		expect(fetched.filter((x) => x === 'a')).toHaveLength(1);
+		expect(c.size).toBe(1);
+		expect(c.bytes).toBe(50);
+	});
+
+	it('逐出后 buildBytes 重拉路径仍成功（新字节对象，CRC 按身份重算）', async () => {
+		let n = 0;
+		const c = createByteCache(
+			async () => new Uint8Array([0x52, 0x49, ++n]),
+			1 // cap=1：任何条目入缓存即超限，下一次必然逐出重拉
+		);
+		const buildBytes = async () => (await c.load('x')).slice(); // 模拟 osz.buildBytes 的取字节形态
+		const r1 = await buildBytes();
+		const r2 = await buildBytes(); // x 已被逐出 → 重新 fetch
+		expect(n).toBe(2);
+		expect(r1).not.toBe(r2); // 新对象（WeakMap CRC 缓存按身份失效，属预期重算）
+		expect(r2[2]).toBe(2);
+	});
+
+	it('trim 只缩容不清空（close 语义：热格子驻留）', async () => {
+		const c = createByteCache(async () => bytes(60), 100);
+		await c.load('a');
+		await c.load('b'); // 逐出 a，b 驻留
+		c.trim();
+		expect(c.size).toBe(1);
+		expect(c.bytes).toBe(60);
 	});
 });
