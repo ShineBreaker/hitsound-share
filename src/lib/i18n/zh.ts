@@ -127,6 +127,20 @@ const zh = {
 	'auth.logout': '登出',
 	'auth.myUploads': '我的上传',
 	'auth.loginRequired': '请先登录',
+	'app.admin': '管理员',
+
+	// 管理员名单
+	'admin.title': '管理员',
+	'admin.placeholder': 'osu! 用户名或用户 ID（需登录过本站）',
+	'admin.add': '添加',
+	'admin.empty': '名单为空',
+	'admin.remove': '移除',
+	'admin.superBadge': '超级',
+	'admin.superHint': '超级管理员由部署环境变量 ADMIN_OSU_ID 固定指定，不在名单内也可行使全部管理员权限。',
+	'admin.added': '已添加 {name}',
+	'admin.userNotFound': '找不到该用户（需先登录过本站）',
+	'admin.confirmRemove': '确定移除管理员「{name}」？',
+	'admin.failed': '操作失败，请重试',
 
 	// 上传对话框
 	'upload.title': '上传音效',

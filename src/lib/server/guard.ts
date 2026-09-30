@@ -3,7 +3,8 @@
 // 否则放行并回传 env / secrets / session（/pkg）
 import { json, type Cookies } from '@sveltejs/kit';
 import { getEnv, type Env } from './media';
-import { getSecrets, isAdmin, type Secrets } from './env';
+import { getSecrets, type Secrets } from './env';
+import { isAdmin, isSuperAdmin } from './admin';
 import { verifySession, SESSION_COOKIE, type SessionUser } from './session';
 import { getPackage, type PackageRow } from './packages';
 
@@ -39,8 +40,21 @@ export async function requirePackageOwner(
 	const pkg = await getPackage(g.env.DB, id);
 	if (!pkg) return json({ error: 'not_found' }, { status: 404 });
 	const owner = pkg.uploader_osu_id === g.session.osuId;
-	if (!owner && !isAdmin(g.secrets, g.session.osuId)) {
+	if (!owner && !(await isAdmin(g.env.DB, g.secrets, g.session.osuId))) {
 		return json({ error: 'forbidden' }, { status: 403 });
 	}
 	return { ...g, pkg };
+}
+
+/** 超级管理员守卫：仅 ADMIN_OSU_ID 环境变量指定者（管理员名单维护入口） */
+export async function requireSuperAdmin(
+	platform: App.Platform | undefined,
+	cookies: Cookies
+): Promise<UserGuard | Response> {
+	const g = await requireUser(platform, cookies);
+	if (g instanceof Response) return g;
+	if (!isSuperAdmin(g.secrets, g.session.osuId)) {
+		return json({ error: 'forbidden' }, { status: 403 });
+	}
+	return g;
 }

@@ -9,9 +9,10 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
-	import { fetchConfig, fetchMe } from '$lib/api';
+	import { fetchConfig, fetchMe, type Me } from '$lib/api';
 	import UploadDialog from '$lib/components/UploadDialog.svelte';
 	import MyPackages from '$lib/components/MyPackages.svelte';
+	import AdminPanel from '$lib/components/AdminPanel.svelte';
 	import HelpDialog from '$lib/components/HelpDialog.svelte';
 	import Tour from '$lib/components/Tour.svelte';
 	import { ui } from '$lib/ui.svelte';
@@ -21,9 +22,10 @@
 	// 登录/上传入口按 /api/config 显隐：上传链路凭证未配齐时隐藏（浏览/试听/下载不受影响）。
 	// 预渲染 HTML 中初始为 false（隐藏），客户端拉到配置后再显形，避免烘错部署期状态
 	let uploadEnabled = $state(false);
-	let me = $state<{ username: string } | null>(null);
+	let me = $state<Me | null>(null);
 	let showUpload = $state(false);
 	let showMy = $state(false);
+	let showAdmin = $state(false); // 管理员名单面板（仅超级管理员可见入口）
 
 	onMount(() => {
 		// ? 键（Shift+/）打开帮助：不在输入框、无其他模态时生效
@@ -44,7 +46,7 @@
 			}
 			if (!uploadEnabled) return;
 			const data = await fetchMe();
-			if (data.loggedIn && data.username) me = { username: data.username };
+			if (data.loggedIn && data.username) me = data;
 		})();
 		return () => window.removeEventListener('keydown', onKey);
 	});
@@ -77,6 +79,11 @@
 					<button class="user" type="button" onclick={() => (showMy = true)} title={me.username}>
 						{me.username}
 					</button>
+					{#if me.isSuperAdmin}
+						<button class="linklike" type="button" onclick={() => (showAdmin = true)}>
+							{t('app.admin')}
+						</button>
+					{/if}
 					<button class="linklike" type="button" onclick={() => void logout()}>
 						{t('auth.logout')}
 					</button>
@@ -139,6 +146,9 @@
 {/if}
 {#if showMy}
 	<MyPackages onclose={() => (showMy = false)} />
+{/if}
+{#if showAdmin}
+	<AdminPanel onclose={() => (showAdmin = false)} meOsuId={me?.osuId} />
 {/if}
 {#if ui.helpOpen}
 	<HelpDialog {uploadEnabled} onclose={() => (ui.helpOpen = false)} />

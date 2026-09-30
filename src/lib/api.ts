@@ -13,8 +13,10 @@ export interface TreePackage {
 export interface Me {
 	loggedIn: boolean;
 	username?: string;
+	avatarUrl?: string | null;
 	osuId?: number;
 	isAdmin?: boolean;
+	isSuperAdmin?: boolean;
 }
 
 async function getJSON<T>(url: string, init?: RequestInit): Promise<T> {
@@ -57,16 +59,21 @@ export function fetchZipManifest(pkgId: string): Promise<ZipManifest> {
 	return getJSON(`/api/package/${encodeURIComponent(pkgId)}/zip`);
 }
 
-async function mutate(url: string, method: string, body: unknown): Promise<void> {
+async function mutateJSON<T>(url: string, method: string, body?: unknown): Promise<T> {
 	const res = await fetch(url, {
 		method,
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
+		headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+		body: body === undefined ? undefined : JSON.stringify(body)
 	});
 	if (!res.ok) {
 		const err = (await res.json().catch(() => ({}))) as { error?: string };
 		throw new Error(err.error ?? `HTTP ${res.status}`);
 	}
+	return (await res.json().catch(() => ({}))) as T;
+}
+
+function mutate(url: string, method: string, body?: unknown): Promise<void> {
+	return mutateJSON(url, method, body).then(() => undefined);
 }
 
 /** 大类改名（包名） */
@@ -77,6 +84,27 @@ export function renamePackage(pkgId: string, name: string): Promise<void> {
 /** 小类改名（包内文件夹，含子文件夹级联；to 已存在 = 合并） */
 export function renameFolder(pkgId: string, from: string, to: string): Promise<void> {
 	return mutate(`/api/package/${encodeURIComponent(pkgId)}/folder`, 'PATCH', { from, to });
+}
+
+export interface AdminRow {
+	osu_id: number;
+	username: string;
+	avatar_url: string | null;
+}
+
+/** 管理员名单（仅超级管理员可调） */
+export function fetchAdmins(): Promise<{ admins: AdminRow[] }> {
+	return getJSON('/api/admin/admins');
+}
+
+/** 授管理员：user 为 osu! ID（全数字）或用户名（限已登录过本站的用户） */
+export function addAdmin(user: string): Promise<{ admin: AdminRow }> {
+	return mutateJSON('/api/admin/admins', 'POST', { user });
+}
+
+/** 撤管理员（幂等） */
+export function removeAdmin(osuId: number): Promise<void> {
+	return mutate('/api/admin/admins', 'DELETE', { osu_id: osuId });
 }
 
 // 波形批量取数：16ms 窗口内请求的 id 合并成一次 /api/waveform?ids=… 调用（每批 ≤100，

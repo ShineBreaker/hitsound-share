@@ -34,11 +34,6 @@ export function getSecrets(platform: App.Platform | undefined): Partial<Secrets>
 	};
 }
 
-/** 是否为管理员（ADMIN_OSU_ID 环境变量比对，每次实时判定，不落 session） */
-export function isAdmin(secrets: Partial<Secrets>, osuId: number): boolean {
-	return Boolean(secrets.ADMIN_OSU_ID && secrets.ADMIN_OSU_ID === String(osuId));
-}
-
 /** 预签名所需的 R2 三项（getSecrets 的子集，凑齐即可签名） */
 export type R2Secrets = Pick<Secrets, 'R2_ACCOUNT_ID' | 'R2_ACCESS_KEY_ID' | 'R2_SECRET_ACCESS_KEY'>;
 
