@@ -47,9 +47,11 @@ export function fetchFiles(
 	return getJSON(`/api/files?${q}`);
 }
 
-/** 站点配置：上传开关 + 限制常量 + 存储池用量；dailyPackagesUsed 仅登录时非 null */
+/** 站点配置：上传开关 + 限制常量 + 存储池用量 + 访问密码门状态；dailyPackagesUsed 仅登录时非 null */
 export interface SiteConfig {
 	uploadEnabled: boolean;
+	/** 访问密码门：locked = 未解锁（前端显示全站遮罩） */
+	gate: { locked: boolean };
 	limits: {
 		maxFileBytes: number;
 		maxPackageBytes: number;
@@ -63,6 +65,16 @@ export interface SiteConfig {
 
 export function fetchConfig(): Promise<SiteConfig> {
 	return getJSON('/api/config');
+}
+
+/** 解锁站点访问密码门；密码错误 reject Error('wrong_password') */
+export function unlockSite(password: string): Promise<void> {
+	return mutateJSON('/api/site-gate', 'POST', { password }).then(() => undefined);
+}
+
+/** 修改站点访问密码（管理员）；非法长度 reject Error('bad_password') */
+export function setSitePassword(password: string): Promise<void> {
+	return mutate('/api/admin/site-gate', 'PUT', { password });
 }
 
 /** 当前登录态（未配置/未登录均返回 loggedIn:false） */

@@ -25,21 +25,22 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 - 本地：`direnv allow` → `pnpm install` → 初始化本地 D1（见常用命令）→ `pnpm dev` 跑浏览/试听；上传链路需 OAuth 项，留空时登录/上传入口自动隐藏；改 API 层用 `wrangler pages dev` 起产物实测
 - 部署走 Pages Git 集成：推送 main 分支自动构建；**构建命令（`pnpm build`）配置在 Pages 项目构建设置里（面板/API 的 build_config），不在 wrangler.toml**——wrangler.toml 只承载输出目录、compatibility 与 R2/D1 bindings
-- 运行时需在 Pages 配 7 个 Production 加密变量：`OSU_CLIENT_ID`、`OSU_CLIENT_SECRET`、`SESSION_SECRET`、`ADMIN_OSU_ID`、`R2_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`（`SESSION_SECRET` 用 `openssl rand -hex 32` 生成）
+- 运行时需在 Pages 配 7 个 Production 加密变量：`OSU_CLIENT_ID`、`OSU_CLIENT_SECRET`、`SESSION_SECRET`、`ADMIN_OSU_ID`、`R2_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`（`SESSION_SECRET` 用 `openssl rand -hex 32` 生成）；可选 `SITE_DEFAULT_PASSWORD`（站点访问密码门初始密码，配置即启用；管理员在线改密后落 D1 settings，此变量不再生效）
 - osu! OAuth 回调地址：`https://<域名>/api/auth/callback`（默认按请求 origin 推导，`OSU_REDIRECT_URI` 一般不用配）
-- D1 初始化/变更：执行 `schema.sql`，执行后必须 SELECT 验证（见下文已知坑）；线上库 v3→v4 需先执行 `ALTER TABLE packages ADD COLUMN append_to TEXT;` 再部署代码
+- D1 初始化/变更：执行 `schema.sql`，执行后必须 SELECT 验证（见下文已知坑）；线上库 v5→v6 直接执行 `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`（站点访问密码），v3→v4 需先执行 `ALTER TABLE packages ADD COLUMN append_to TEXT;` 再部署代码
 - 存量 original.zip 清理（v4 停传后的一次性动作）：admin 登录后 `POST /api/admin/purge-zips`，重复调用至 `remaining: 0`
 
 ## 目录速览
 
-- `src/lib/server/` — 仅服务端代码：`osu.ts`（唯一出网通道）、`session.ts`（HMAC 签名 cookie）、`guard.ts`（`requireUser`/`requirePackageOwner`/`requireSuperAdmin`，返回 Response 即已作答）、`env.ts`（密钥读取 + `uploadCapable`/`pickR2Secrets` 能力判定）、`admin.ts`（管理员判定：超管 = ADMIN_OSU_ID 环境变量，管理员 = `users.is_admin`，每次实时查库不落 session）、`media.ts`（R2 key/Range/流式代理）、`upload.ts`（manifest 校验/预签名 PUT+GET/魔数）、`ledger.ts`（Blob 账本：refcount 登记/对齐/回收，唯一入口；`releasePackage` 整包、`releaseFiles` 文件/文件夹级删除）、`verify.ts`（done 新 blob 核验）、`packages.ts`（包行查询/pending 懒清理）
+- `src/lib/server/` — 仅服务端代码：`osu.ts`（唯一出网通道）、`session.ts`（HMAC 签名 cookie）、`guard.ts`（`requireUser`/`requireAdmin`/`requirePackageOwner`/`requireSuperAdmin`，返回 Response 即已作答）、`env.ts`（密钥读取 + `uploadCapable`/`pickR2Secrets` 能力判定）、`admin.ts`（管理员判定：超管 = ADMIN_OSU_ID 环境变量，管理员 = `users.is_admin`，每次实时查库不落 session）、`media.ts`（R2 key/Range/流式代理）、`upload.ts`（manifest 校验/预签名 PUT+GET/魔数）、`ledger.ts`（Blob 账本：refcount 登记/对齐/回收，唯一入口；`releasePackage` 整包、`releaseFiles` 文件/文件夹级删除）、`verify.ts`（done 新 blob 核验）、`packages.ts`（包行查询/pending 懒清理）、`site-gate.ts`（站点访问密码门：密码源 = D1 settings > `SITE_DEFAULT_PASSWORD`，皆无未启用；解锁 cookie 以当前密码 hash 为 HMAC 密钥——改密即全站会话失效）
 - `src/lib/*.ts` — 浏览器端 deep module：`upload-pipeline.ts`（`prepareUpload` 解包（zip/rar/7z，唯一顶层文件夹剥前缀提升）→哈希 + `runUpload` manifest→并发直传→done，事件流上报；`archive.ts` 按魔数分流，rar/7z wasm 按需加载（`unrar-wasm.ts`/`seven-zip-wasm.ts`；7z 退出码不可靠，成败看输出文本与裸数字 throw）、`zip-save.ts`（整包下载与组装面板共用的打包落盘）、`player.svelte.ts`（全站唯一播放器）、`kit.svelte.ts`（组装面板格子/序号/Q–V 键位，唯一入口）、`selection.svelte.ts`（文件表选中集 + 入格）、`ui.svelte.ts` + `tour.ts`（帮助/新手引导状态与步骤）、`pool.ts`（并发池）、`api.ts`（含 peaks 合批）
 - `src/test/` — 测试 adapter：`d1-sqlite.ts`（node:sqlite 模拟 D1）、`r2-memory.ts`（内存 R2），均带 `calls` 计数用于断言子请求预算
-- `src/routes/api/**` — 全部 API 端点（编译为 Pages Functions）：`upload`（manifest+影子包；单文件 ≤10MB / 每日 5 包 / 全局水位 10GB 三重闸门合一的条件 INSERT，管理员豁免前两项、不豁免水位）、`upload/done`（核验+合并）、`package/[id]`（PATCH 改名 / DELETE 整包）、`package/[id]/folder`（PATCH 小类改名 / DELETE 小类删除）、`package/[id]/zip`（整包下载清单）、`files`（GET 列文件 / DELETE 批量删文件，可跨包）、`blob/[hash]/[ext]`（下载回退代理）、`admin/purge-zips`、`admin/admins`（管理员名单，仅超管）、`config`（上传开关 + 限制常量/存储池用量/登录时当日配额，与水位公式同口径）、`tree`/`waveform`/`my`/`auth`
+- `src/routes/api/**` — 全部 API 端点（编译为 Pages Functions）：`upload`（manifest+影子包；单文件 ≤10MB / 每日 5 包 / 全局水位 10GB 三重闸门合一的条件 INSERT，管理员豁免前两项、不豁免水位）、`upload/done`（核验+合并）、`package/[id]`（PATCH 改名 / DELETE 整包）、`package/[id]/folder`（PATCH 小类改名 / DELETE 小类删除）、`package/[id]/zip`（整包下载清单）、`files`（GET 列文件 / DELETE 批量删文件，可跨包）、`blob/[hash]/[ext]`（下载回退代理）、`admin/purge-zips`、`admin/admins`（管理员名单，仅超管）、`admin/site-gate`（改站点访问密码，管理员）、`site-gate`（POST 解锁，hooks 白名单）、`config`（上传开关 + 访问门状态 + 限制常量/存储池用量/登录时当日配额，与水位公式同口径）、`tree`/`waveform`/`my`/`auth`
+- `src/hooks.server.ts` — 站点访问密码门统一拦截：`/api/*` 与 `/f/*` 未解锁 401 `site_locked`（白名单 `/api/site-gate`、`/api/config`；门未启用不拦；每请求 1 条 settings 主键 SELECT）；首页 shell 是预渲染静态资产不进 Functions，数据全靠此层保护
 - `src/routes/+page.ts` prerender 首页 shell 省 Functions 配额；整包下载由 `+page.svelte` 拉清单后交给 `zip-save.ts`（fflate 流式 STORE）
-- `src/lib/components/` — TreeView（行内改名 + 删除钮，包主/管理员可见）/ FileTable（复选框多选，行可拖入组装面板）/ WaveformCanvas / UploadDialog（新建/附加模式）/ MyPackages / AdminPanel（超管名单维护）/ KitBuilder（右下角悬浮组装面板，渲染 `kit`；自动展开必须经 setTimeout 延迟——dragstart 内同步改 DOM 会被 Chromium 取消拖拽）/ HelpDialog（顶栏「?」与 `?` 键）/ Tour（首次访问分步引导，目标用 `data-tour` 属性标注——新增或移动被引导的元素时同步更新 `tour.ts`）
+- `src/lib/components/` — TreeView（行内改名 + 删除钮，包主/管理员可见）/ FileTable（复选框多选，行可拖入组装面板）/ WaveformCanvas / UploadDialog（新建/附加模式）/ MyPackages / AdminPanel（站点访问密码维护（管理员）+ 超管名单维护）/ SiteGate（全站解锁遮罩，config.gate.locked 时显示）/ KitBuilder（右下角悬浮组装面板，渲染 `kit`；自动展开必须经 setTimeout 延迟——dragstart 内同步改 DOM 会被 Chromium 取消拖拽）/ HelpDialog（顶栏「?」与 `?` 键）/ Tour（首次访问分步引导，目标用 `data-tour` 属性标注——新增或移动被引导的元素时同步更新 `tour.ts`）
 - `src/lib/i18n/` — 文案集中在 `zh.ts` + `t()`（预留 en），不要在组件里写死中文
-- `schema.sql` — D1 表结构（v4：packages.append_to 影子包）；`wrangler.toml` — Pages 构建配置 + R2/D1 bindings；`svelte.config.js` — CSP
+- `schema.sql` — D1 表结构（v6：settings 站点访问密码；v4：packages.append_to 影子包）；`wrangler.toml` — Pages 构建配置 + R2/D1 bindings；`svelte.config.js` — CSP
 - 环境三件套：`.envrc`（direnv 入口）、`manifest.scm`（guix 依赖）、`pnpm-workspace.yaml`（pnpm 设置）
 
 ## 硬性规则

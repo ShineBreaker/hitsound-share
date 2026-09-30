@@ -1,4 +1,4 @@
--- hitsound-share D1 schema (v5, 文件级所有者)
+-- hitsound-share D1 schema (v6, 站点访问密码)
 -- 树结构说明：不设 folders 表，树由 files.folder_path 前缀聚合得出（DISTINCT + 前缀分组），
 -- 消除整层关联；空文件夹不保留（可接受损失）。
 -- v3→v4 线上变更：ALTER TABLE packages ADD COLUMN append_to TEXT;
@@ -6,6 +6,15 @@
 --   ALTER TABLE files ADD COLUMN owner_osu_id INTEGER REFERENCES users(osu_id) ON DELETE SET NULL;
 --   UPDATE files SET owner_osu_id = (SELECT uploader_osu_id FROM packages WHERE packages.id = files.package_id);
 -- （v4 起 original.zip 停传停存，整包下载由浏览器按 files 实时打包）
+-- v5→v6 线上变更（直接执行即可，CREATE IF NOT EXISTS）：
+--   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+-- 站点级配置键值（当前仅 site_password_hash = sha256(盐+访问密码)，管理员改密后落库；
+-- 无记录时退回环境变量 SITE_DEFAULT_PASSWORD，两者皆无 = 门未启用）
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS users (
   osu_id    INTEGER PRIMARY KEY,          -- osu! 用户 ID

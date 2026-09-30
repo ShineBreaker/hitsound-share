@@ -141,6 +141,7 @@ const zh = {
 
 	// 管理员名单
 	'admin.title': '管理员',
+	'admin.list.title': '管理员名单',
 	'admin.placeholder': 'osu! 用户名或用户 ID（需登录过本站）',
 	'admin.add': '添加',
 	'admin.empty': '名单为空',
@@ -151,6 +152,22 @@ const zh = {
 	'admin.userNotFound': '找不到该用户（需先登录过本站）',
 	'admin.confirmRemove': '确定移除管理员「{name}」？',
 	'admin.failed': '操作失败，请重试',
+
+	// 管理员面板：站点访问密码
+	'admin.gate.title': '站点访问密码',
+	'admin.gate.placeholder': '新访问密码（4-100 字符）',
+	'admin.gate.save': '保存',
+	'admin.gate.changed': '访问密码已更新',
+	'admin.gate.bad': '密码需 4-100 个字符，且不能全为空白',
+	'admin.gate.hint': '访客需输入此密码才能进入站点；修改后已解锁的会话将全部失效（你会自动保持解锁）。',
+
+	// 站点访问密码门（全站遮罩）
+	'gate.title': '本站已上锁',
+	'gate.hint': '输入访问密码进入站点',
+	'gate.placeholder': '访问密码',
+	'gate.unlock': '解锁',
+	'gate.wrong': '密码错误',
+	'gate.failed': '解锁失败，请重试',
 
 	// 上传对话框
 	'upload.title': '上传音效',

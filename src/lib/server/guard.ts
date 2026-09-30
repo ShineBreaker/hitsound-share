@@ -46,6 +46,19 @@ export async function requirePackageOwner(
 	return { ...g, pkg };
 }
 
+/** 管理员守卫：登录 + 管理员（超管或 users.is_admin 名单；站点访问密码维护等） */
+export async function requireAdmin(
+	platform: App.Platform | undefined,
+	cookies: Cookies
+): Promise<UserGuard | Response> {
+	const g = await requireUser(platform, cookies);
+	if (g instanceof Response) return g;
+	if (!(await isAdmin(g.env.DB, g.secrets, g.session.osuId))) {
+		return json({ error: 'forbidden' }, { status: 403 });
+	}
+	return g;
+}
+
 /** 超级管理员守卫：仅 ADMIN_OSU_ID 环境变量指定者（管理员名单维护入口） */
 export async function requireSuperAdmin(
 	platform: App.Platform | undefined,

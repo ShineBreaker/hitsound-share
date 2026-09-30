@@ -13,6 +13,7 @@
 	import UploadDialog from '$lib/components/UploadDialog.svelte';
 	import MyPackages from '$lib/components/MyPackages.svelte';
 	import AdminPanel from '$lib/components/AdminPanel.svelte';
+	import SiteGate from '$lib/components/SiteGate.svelte';
 	import HelpDialog from '$lib/components/HelpDialog.svelte';
 	import Tour from '$lib/components/Tour.svelte';
 	import { ui } from '$lib/ui.svelte';
@@ -25,7 +26,8 @@
 	let me = $state<Me | null>(null);
 	let showUpload = $state(false);
 	let showMy = $state(false);
-	let showAdmin = $state(false); // 管理员名单面板（仅超级管理员可见入口）
+	let showAdmin = $state(false); // 管理员面板（访问密码 + 超管的名单维护）
+	let gateLocked = $state(false); // 站点访问密码门：未解锁时全站遮罩，数据 API 均 401
 
 	onMount(() => {
 		// ? 键（Shift+/）打开帮助：不在输入框、无其他模态时生效
@@ -40,11 +42,13 @@
 		// 配置与登录态是独立异步流程，不阻塞监听注册
 		void (async () => {
 			try {
-				uploadEnabled = (await fetchConfig()).uploadEnabled;
+				const cfg = await fetchConfig();
+				uploadEnabled = cfg.uploadEnabled;
+				gateLocked = cfg.gate.locked;
 			} catch {
 				// 配置拉取失败按未启用处理
 			}
-			if (!uploadEnabled) return;
+			if (gateLocked || !uploadEnabled) return; // 未解锁时登录态请求也会 401，解锁后整页刷新重载
 			const data = await fetchMe();
 			if (data.loggedIn && data.username) me = data;
 		})();
@@ -79,7 +83,7 @@
 					<button class="user" type="button" onclick={() => (showMy = true)} title={me.username}>
 						{me.username}
 					</button>
-					{#if me.isSuperAdmin}
+					{#if me.isSuperAdmin || me.isAdmin}
 						<button class="linklike" type="button" onclick={() => (showAdmin = true)}>
 							{t('app.admin')}
 						</button>
@@ -152,12 +156,21 @@
 	<MyPackages onclose={() => (showMy = false)} />
 {/if}
 {#if showAdmin}
-	<AdminPanel onclose={() => (showAdmin = false)} meOsuId={me?.osuId} />
+	<AdminPanel
+		onclose={() => (showAdmin = false)}
+		isSuperAdmin={me?.isSuperAdmin ?? false}
+		meOsuId={me?.osuId}
+	/>
 {/if}
 {#if ui.helpOpen}
 	<HelpDialog {uploadEnabled} onclose={() => (ui.helpOpen = false)} />
 {/if}
 <Tour />
+
+<!-- 站点访问密码门：盖住整站（含所有对话框），解锁成功后整页刷新重载数据 -->
+{#if gateLocked}
+	<SiteGate onunlock={() => location.reload()} />
+{/if}
 
 <style>
 	.shell {

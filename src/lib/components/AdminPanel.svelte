@@ -1,16 +1,18 @@
 <script lang="ts">
-	// 管理员名单面板（仅超级管理员可见入口）：列名单 / 添加（osu! ID 或用户名，
-	// 限已登录过本站的用户）/ 移除。名单存 users.is_admin，撤权即时生效
+	// 管理员面板：站点访问密码维护（全体管理员）+ 管理员名单（仅超级管理员）。
+	// 名单存 users.is_admin，撤权即时生效；访问密码存 D1 settings，改完全站已解锁会话作废
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
-	import { fetchAdmins, addAdmin, removeAdmin, type AdminRow } from '$lib/api';
+	import { fetchAdmins, addAdmin, removeAdmin, setSitePassword, type AdminRow } from '$lib/api';
 
 	interface Props {
 		onclose: () => void;
+		/** 当前登录者是否超级管理员：名单区块的显示与维护权限 */
+		isSuperAdmin?: boolean;
 		/** 当前登录者 osu ID：命中名单行时标「超级」徽章（其实际权限来自环境变量） */
 		meOsuId?: number;
 	}
-	let { onclose, meOsuId }: Props = $props();
+	let { onclose, isSuperAdmin = false, meOsuId }: Props = $props();
 
 	let admins = $state<AdminRow[]>([]);
 	let loading = $state(true);
@@ -70,8 +72,30 @@
 	}
 
 	$effect(() => {
-		void load();
+		if (isSuperAdmin) void load();
 	});
+
+	// 站点访问密码（全体管理员可改；改密者自动获发新解锁 cookie）
+	let gatePw = $state('');
+	let gateBusy = $state(false);
+	let gateNotice = $state('');
+	let gateErr = $state('');
+
+	async function saveGate(): Promise<void> {
+		if (gateBusy || gatePw === '') return;
+		gateBusy = true;
+		gateNotice = '';
+		gateErr = '';
+		try {
+			await setSitePassword(gatePw);
+			gatePw = '';
+			gateNotice = t('admin.gate.changed');
+		} catch (e) {
+			gateErr = (e as Error).message === 'bad_password' ? t('admin.gate.bad') : t('admin.failed');
+		} finally {
+			gateBusy = false;
+		}
+	}
 
 	let cardEl = $state<HTMLElement | undefined>();
 	onMount(() => {
@@ -90,49 +114,86 @@
 		<h2>{t('admin.title')}</h2>
 		<button class="dialog-close" aria-label={t('upload.close')} onclick={onclose}>×</button>
 
-		<form class="addrow" onsubmit={(e) => { e.preventDefault(); void add(); }}>
-			<input
-				bind:value={input}
-				placeholder={t('admin.placeholder')}
-				maxlength="100"
-				disabled={busy}
-			/>
-			<button class="btn primary" type="submit" disabled={busy || input.trim() === ''}>
-				{t('admin.add')}
-			</button>
-		</form>
+		<section class="gate-sec">
+			<h3>{t('admin.gate.title')}</h3>
+			<form
+				class="addrow"
+				onsubmit={(e) => {
+					e.preventDefault();
+					void saveGate();
+				}}
+			>
+				<input
+					bind:value={gatePw}
+					type="password"
+					placeholder={t('admin.gate.placeholder')}
+					maxlength="100"
+					autocomplete="new-password"
+					disabled={gateBusy}
+				/>
+				<button class="btn primary" type="submit" disabled={gateBusy || gatePw === ''}>
+					{t('admin.gate.save')}
+				</button>
+			</form>
+			{#if gateNotice}<p class="notice">{gateNotice}</p>{/if}
+			{#if gateErr}<p class="err-text">{gateErr}</p>{/if}
+			<p class="hint">{t('admin.gate.hint')}</p>
+		</section>
 
-		{#if loading}
-			<p class="hint">{t('table.loading')}</p>
-		{:else if loadFailed}
-			<p class="hint">{t('error.load')}</p>
-			<button class="btn load-err" onclick={() => void load()}>{t('action.retry')}</button>
-		{:else if admins.length === 0}
-			<p class="hint">{t('admin.empty')}</p>
-		{:else}
-			<div class="list">
-				{#each admins as a (a.osu_id)}
-					<div class="item">
-						<div class="info">
-							<span class="name">{a.username}</span>
-							<span class="meta">
-								#{a.osu_id}
-								{#if a.osu_id === meOsuId}
-									<span class="badge">{t('admin.superBadge')}</span>
-								{/if}
-							</span>
-						</div>
-						<button class="btn danger del" disabled={busy} onclick={() => void remove(a)}>
-							{t('admin.remove')}
-						</button>
+		{#if isSuperAdmin}
+			<section>
+				<h3>{t('admin.list.title')}</h3>
+				<form
+					class="addrow"
+					onsubmit={(e) => {
+						e.preventDefault();
+						void add();
+					}}
+				>
+					<input
+						bind:value={input}
+						placeholder={t('admin.placeholder')}
+						maxlength="100"
+						disabled={busy}
+					/>
+					<button class="btn primary" type="submit" disabled={busy || input.trim() === ''}>
+						{t('admin.add')}
+					</button>
+				</form>
+
+				{#if loading}
+					<p class="hint">{t('table.loading')}</p>
+				{:else if loadFailed}
+					<p class="hint">{t('error.load')}</p>
+					<button class="btn load-err" onclick={() => void load()}>{t('action.retry')}</button>
+				{:else if admins.length === 0}
+					<p class="hint">{t('admin.empty')}</p>
+				{:else}
+					<div class="list">
+						{#each admins as a (a.osu_id)}
+							<div class="item">
+								<div class="info">
+									<span class="name">{a.username}</span>
+									<span class="meta">
+										#{a.osu_id}
+										{#if a.osu_id === meOsuId}
+											<span class="badge">{t('admin.superBadge')}</span>
+										{/if}
+									</span>
+								</div>
+								<button class="btn danger del" disabled={busy} onclick={() => void remove(a)}>
+									{t('admin.remove')}
+								</button>
+							</div>
+						{/each}
 					</div>
-				{/each}
-			</div>
-		{/if}
+				{/if}
 
-		{#if notice}<p class="notice">{notice}</p>{/if}
-		{#if err}<p class="err-text">{err}</p>{/if}
-		<p class="hint foot">{t('admin.superHint')}</p>
+				{#if notice}<p class="notice">{notice}</p>{/if}
+				{#if err}<p class="err-text">{err}</p>{/if}
+				<p class="hint foot">{t('admin.superHint')}</p>
+			</section>
+		{/if}
 	</div>
 </div>
 
@@ -147,6 +208,21 @@
 	h2 {
 		margin: 0 0 14px;
 		font-size: 17px;
+	}
+
+	.gate-sec {
+		margin-bottom: 18px;
+	}
+
+	h3 {
+		margin: 0 0 8px;
+		font-size: 14px;
+		color: var(--text);
+	}
+
+	.gate-sec .hint {
+		margin: 10px 0 0;
+		font-size: 12px;
 	}
 
 	.addrow {
