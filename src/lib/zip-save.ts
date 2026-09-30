@@ -77,6 +77,11 @@ export async function packZip(opts: PackZipOpts): Promise<void> {
 
 export type SaveZipResult = 'saved' | 'cancelled';
 
+export interface SaveZipOpts extends Omit<PackZipOpts, 'write'> {
+	/** 保存扩展名（默认 zip；谱面集导出传 'osz'） */
+	ext?: string;
+}
+
 // File System Access API：lib.dom 未收录 showSaveFilePicker / 流式写接口，最小声明够用即可
 interface SaveFilePickerOptions {
 	suggestedName?: string;
@@ -95,20 +100,21 @@ const picker = (): ((o: SaveFilePickerOptions) => Promise<FsFileHandle>) | undef
 		.showSaveFilePicker;
 
 /**
- * 打包并保存为 <name>.zip：File System Access 可用时流式写盘（用户取消 → 'cancelled'，
+ * 打包并保存为 <name>.<ext>：File System Access 可用时流式写盘（用户取消 → 'cancelled'，
  * 其他异常回退内存 Blob）；任何失败若有 writable 先 abort 再抛出。
  */
 export async function saveZip(
 	name: string,
-	opts: Omit<PackZipOpts, 'write'>
+	opts: SaveZipOpts
 ): Promise<SaveZipResult> {
-	const suggested = `${name || 'package'}.zip`;
+	const { ext = 'zip', ...pack } = opts;
+	const suggested = `${name || 'package'}.${ext}`;
 	if (typeof window !== 'undefined' && typeof picker() === 'function') {
 		let handle: FsFileHandle | null = null;
 		try {
 			handle = await picker()!({
 				suggestedName: suggested,
-				types: [{ description: 'ZIP', accept: { 'application/zip': ['.zip'] } }]
+				types: [{ description: ext.toUpperCase(), accept: { 'application/octet-stream': [`.${ext}`] } }]
 			});
 		} catch (e) {
 			if (e instanceof DOMException && e.name === 'AbortError') return 'cancelled';
@@ -117,7 +123,7 @@ export async function saveZip(
 		if (handle) {
 			const writable = await handle.createWritable();
 			try {
-				await packZip({ ...opts, write: (chunk) => writable.write(chunk) });
+				await packZip({ ...pack, write: (chunk) => writable.write(chunk) });
 				await writable.close();
 				return 'saved';
 			} catch (e) {
@@ -129,7 +135,7 @@ export async function saveZip(
 
 	// 内存 Blob 兜底（超大包移动端可能吃紧，可接受）
 	const chunks: Uint8Array[] = [];
-	await packZip({ ...opts, write: (chunk) => void chunks.push(chunk) });
+	await packZip({ ...pack, write: (chunk) => void chunks.push(chunk) });
 	const blob = new Blob(chunks as BlobPart[], { type: 'application/zip' });
 	const a = document.createElement('a');
 	a.href = URL.createObjectURL(blob);

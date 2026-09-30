@@ -156,8 +156,9 @@ interface ManifestResult {
 /**
  * 唯一顶层文件夹判定（「压缩包解压出来是一个文件夹」）：所有条目——含非音频——
  * 都落在同一个顶层文件夹下才成立；有顶层散文件或多个顶层文件夹则返回 null。
+ * 上传与谱面集导入共用同一口径。
  */
-function liftTopDir(files: ArchiveFile[]): { topDir: string; stripped: ArchiveFile[] } | null {
+export function liftTopDir(files: ArchiveFile[]): { topDir: string; stripped: ArchiveFile[] } | null {
 	if (files.length === 0) return null;
 	const first = files[0].path;
 	const i = first.indexOf('/');

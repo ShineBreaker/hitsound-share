@@ -66,6 +66,23 @@ const zh = {
 	'kit.dupName': '重名，解压时会互相覆盖，请调整序号',
 	'kit.assigned': '已加入 {count} 个到 {cell}',
 
+	// 谱面集（osz）：导入 .osz → 格子音效按「同名（不区分后缀）」覆盖根目录音效 → 导出合并包
+	'osz.import': '导入谱面',
+	'osz.hint': '拖入或选择 .osz 谱面包：格子音效按同名（不区分后缀）覆盖包内根目录音效',
+	'osz.files': '{count} 个文件',
+	'osz.replacing': '将替换 {count} 个',
+	'osz.others': '其余 {count} 个非音频文件（.osu / 图片等）原样保留',
+	'osz.listToggle': '谱面内容',
+	'osz.export': '导出 .osz',
+	'osz.remove': '移除谱面集',
+	'osz.willReplace': '将替换谱面中的 {name}',
+	'osz.err.no_osu': '包内没有 .osu 谱面文件，不是有效的谱面包',
+	'osz.err.too_large': '谱面包过大（≤256MB）',
+	'osz.err.unknown_format': '无法识别的文件（osz 本质是 zip 包）',
+	'osz.err.format_unsupported': '暂不支持该压缩格式（分卷 / zip64），请重新打包为 zip',
+	'osz.err.encrypted': '压缩包已加密，请导入未加密的包',
+	'osz.err.corrupt': '谱面包数据损坏或格式异常，无法解包',
+
 	// 多选
 	'sel.bar': '已选 {count} 个 · 按 Q–V 或点击组装面板格子加入',
 	'sel.clear': '清除',
@@ -84,7 +101,7 @@ const zh = {
 	'help.download.title': '下载',
 	'help.download.body': '文件行末的 ↓ 下载单个文件；「下载整包」按当前分组内容实时打包为 zip。',
 	'help.kit.title': '组装面板',
-	'help.kit.body': '把文件行拖进右下角面板格子，或勾选多选后按 Q–V / 点击格子批量加入。命名规则：<行>-<列><序号>.<格式>（如 drum-hitnormal0.wav）：批量加入自动从 0 编号，格内已有数字序号时从最大值续编，手动拖入的单个文件无序号；zip 内重名会标红提醒。',
+	'help.kit.body': '把文件行拖进右下角面板格子，或勾选多选后按 Q–V / 点击格子批量加入。命名规则：<行>-<列><序号>.<格式>（如 drum-hitnormal0.wav）：批量加入自动从 0 编号，格内已有数字序号时从最大值续编，手动拖入的单个文件无序号；zip 内重名会标红提醒。面板里可导入 .osz 谱面包：格子音效按同名（不区分后缀）覆盖包内根目录音效，将被替换的条目以黄框标出，「导出 .osz」直接下载合并后的谱面包。',
 	'help.keymap.title': '格子快捷键',
 	'help.gestures.title': '鼠标与键盘',
 	'help.g.action': '操作',
