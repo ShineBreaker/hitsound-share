@@ -1,5 +1,5 @@
 osucad: https://github.com/ShineBreaker/osucad.git
-branch: feat/hitsound-preview
-commit: 4437327e24c98efb5f723c329ce482d86e261706
-uncommitted-changes: 18
-built-at: 2026-09-30T13:16:41Z
+branch: main
+commit: 193c1da7df2ca88a1d1422ac903ae02aca8b1f0d
+uncommitted-changes: 0
+built-at: 2026-09-30T14:27:07Z

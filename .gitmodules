@@ -1,4 +1,4 @@
 [submodule "vendor/osucad"]
 	path = vendor/osucad
 	url = https://github.com/ShineBreaker/osucad.git
-	branch = feat/hitsound-preview
+	branch = main

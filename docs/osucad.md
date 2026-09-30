@@ -8,7 +8,7 @@
 ```
 hitsound-share                本仓库（SvelteKit + CF Pages）
 ├── vendor/osucad             ← submodule → github.com/ShineBreaker/osucad.git
-│   └── 分支 feat/hitsound-preview（指针钉在某个 commit，见 git submodule status）
+│   └── 分支 main（指针钉在某个 commit，见 git submodule status）
 ├── static/osucad/            ← 提交入库的构建产物（Pages 直接部署，勿手改）
 ├── static/osucad.build-info.txt  ← 本次构建的源码溯源（自动生成）
 └── scripts/build-osucad-preview.sh / smoke-osucad-preview.mjs
@@ -18,7 +18,7 @@ osucad 侧远端：
 
 - `fork`/默认 remote → `github.com/ShineBreaker/osucad.git`（我们的工作仓库）
 - 上游 `minetoblend/osucad` 只用于同步，**不要推**
-- 工作分支固定 `feat/hitsound-preview`
+- 工作分支固定 `main`（fork 上的工作主线，历史从 `feat/hitsound-preview` 合并而来）
 
 构建脚本找源码的顺序：`OSUCAD_DIR` 环境变量 → `vendor/osucad` 子模块 →
 `../osucad` 兄弟 clone。日常开发建议在旁边单独 clone 一份 osucad 随便折腾，
@@ -52,7 +52,7 @@ submodule 也没影响。
 ```bash
 git submodule update --init vendor/osucad     # 用库内钉住的版本
 # 或自己 clone 到旁边，开发更自由：
-git clone -b feat/hitsound-preview git@github.com:ShineBreaker/osucad.git ../osucad
+git clone git@github.com:ShineBreaker/osucad.git ../osucad   # main 即工作分支
 ```
 
 `cd <osucad> && pnpm install`
@@ -96,11 +96,11 @@ node scripts/smoke-osucad-preview.mjs  # CDP 全链路冒烟
 
 ### 5. 提交与指针同步（两侧）
 
-- osucad 侧：提交并推 fork `feat/hitsound-preview`
+- osucad 侧：提交并推 fork `main`
 - hitsound-share 侧：提交 `static/osucad/` + `static/osucad.build-info.txt` +
   脚本/文档改动
 - **若 osucad 推了新提交**，顺手 bump 子模块指针保持一致：
-  `git -C vendor/osucad pull origin feat/hitsound-preview`（或 checkout 目标 sha），
+  `git -C vendor/osucad pull origin main`（或 checkout 目标 sha），
   然后 `git add vendor/osucad` 提交指针
 
 `build-info.txt` 记录的是**实际构建所用源码**（remote/branch/sha/dirty），
@@ -162,8 +162,8 @@ BeatmapSkin → `sourceChanged` → 所有 SkinnableDrawable/SkinnableSound 重�
 
 - 指针与构建产物可能短暂不一致（比如在兄弟 clone 里构建过但还没推/没 bump）——
   以 `build-info.txt` 为构建真相，指针为「库内钉住版本」，发版前对齐
-- `git submodule update --remote` 会把 vendor 拉到 `feat/hitsound-preview` 最新，
+- `git submodule update --remote` 会把 vendor 拉到 `main` 最新，
   再 `git add vendor/osucad` 提交新指针；配合 `build-osucad-preview.sh` 重建产物
 - 子模块内做开发也可以，但注意 git 的 detached HEAD 习惯（先
-  `git checkout feat/hitsound-preview` 再动手）；改完记得：osucad 推远端 →
+  `git checkout main` 再动手）；改完记得：osucad 推远端 →
   本仓库 bump 指针 → 重建产物，三步缺一不可
