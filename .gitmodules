@@ -2,3 +2,4 @@
 	path = vendor/osucad
 	url = https://github.com/ShineBreaker/osucad.git
 	branch = main
+	shallow = true
