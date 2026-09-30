@@ -17,6 +17,63 @@ function returnsRows(sql: string): boolean {
 	return head.startsWith('SELECT') || head.startsWith('WITH') || /\bRETURNING\b/i.test(sql);
 }
 
+/**
+ * node:sqlite 只认匿名 ? 的位置绑定（?N 要对象绑定）——把 ?N 归一为 ? 并按出现
+ * 顺序从 D1 式编号参数取值（?2 ?1 乱序、同号复用都合法）。跳过字符串与注释。
+ */
+function normalizeParams(sql: string, args: unknown[]): { sql: string; args: unknown[] } {
+	let out = '';
+	const order: number[] = [];
+	let inStr = false;
+	for (let i = 0; i < sql.length; i++) {
+		const c = sql[i];
+		if (inStr) {
+			out += c;
+			if (c === "'") {
+				if (sql[i + 1] === "'") {
+					out += "'";
+					i += 1; // '' 转义
+				} else {
+					inStr = false;
+				}
+			}
+			continue;
+		}
+		if (c === "'") {
+			inStr = true;
+			out += c;
+			continue;
+		}
+		if (c === '-' && sql[i + 1] === '-') {
+			const e = sql.indexOf('\n', i);
+			out += sql.slice(i, e === -1 ? sql.length : e);
+			i = (e === -1 ? sql.length : e) - 1;
+			continue;
+		}
+		if (c === '/' && sql[i + 1] === '*') {
+			const e = sql.indexOf('*/', i + 2);
+			out += sql.slice(i, e === -1 ? sql.length : e + 2);
+			i = (e === -1 ? sql.length : e + 2) - 1;
+			continue;
+		}
+		if (c === '?') {
+			let j = i + 1;
+			let n = 0;
+			let numbered = false;
+			while (j < sql.length && sql[j] >= '0' && sql[j] <= '9') {
+				n = n * 10 + (sql[j].charCodeAt(0) - 48);
+				numbered = true;
+				j += 1;
+			}
+			out += '?';
+			order.push(numbered ? n - 1 : order.length); // 匿名 ? 按位顺取
+			i = j - 1;
+			continue;
+		}
+		out += c;
+	}
+	return { sql: out, args: order.map((k) => args[k]) };
+}
 function fakeMeta(changes: number): D1Result['meta'] {
 	return { changes } as D1Result['meta'];
 }
@@ -34,9 +91,10 @@ class FakeStmt {
 	}
 
 	private raw() {
-		const s = this.inner.prepare(this.sql);
+		const { sql, args } = normalizeParams(this.sql, this.args);
+		const s = this.inner.prepare(sql);
 		// node:sqlite 不接受 undefined 绑定：统一转 null
-		return { s, args: this.args.map((a) => (a === undefined ? null : a)) as never[] };
+		return { s, args: args.map((a) => (a === undefined ? null : a)) as never[] };
 	}
 
 	async first<T = unknown>(): Promise<T | null> {
