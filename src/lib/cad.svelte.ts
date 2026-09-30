@@ -102,6 +102,7 @@ export class Cad {
 		this.playing = false;
 		this.error = '';
 		this.#dirty = false;
+		byteCache.clear(); // 预览关闭即释放缓存的格子字节
 		// 关闭即卸载 iframe（组件 {#if}）→ 下次打开是新引擎，重新走 hs:load
 		this.#sent = 0;
 		this.frame = null;
@@ -217,11 +218,19 @@ function readVolume(key: string): number {
 	}
 }
 
-/** 格子项音源：/f/<id> 全量拉取（与 osz 导出共用口径） */
+/** 格子项音源：/f/<id> 全量拉取（与 osz 导出共用口径）。
+ *  按 id 缓存字节：files.id 是文件行 id（内容不变），预览热更新反复重建
+ *  时未变的格子项不再走网络栈（S7）；clear() 时随预览关闭清空。 */
+const byteCache = new Map<string, Uint8Array>();
+
 async function loadFileBytes(id: string): Promise<Uint8Array> {
+	const hit = byteCache.get(id);
+	if (hit) return hit;
 	const r = await fetch(`/f/${encodeURIComponent(id)}`);
 	if (!r.ok) throw new Error(`HTTP ${r.status}`);
-	return new Uint8Array(await r.arrayBuffer());
+	const bytes = new Uint8Array(await r.arrayBuffer());
+	byteCache.set(id, bytes);
+	return bytes;
 }
 
 export const cad = new Cad({

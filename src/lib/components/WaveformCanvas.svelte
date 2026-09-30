@@ -2,7 +2,8 @@
 	// 波形画布：peaks 渲染为居中对称柱状（薄荷渐变，色值取自 CSS 变量）；
 	// - progress(0-1)：已播部分实色、未播半透明
 	// - 点击波形任意位置 → onseek(比例)，由上层完成跳播
-	// - 进入视口时 onvisible() 一次，触发上层按需拉取 peaks
+	// - 可见性经 IntersectionObserver：滚出视口释放 canvas 位图（长列表省显存），
+	//   首次进入视口（含 100px 预载边距）触发上层按需拉取 peaks
 	import { onMount } from 'svelte';
 
 	interface Props {
@@ -14,19 +15,24 @@
 	let { peaks, progress = 0, onseek, onvisible }: Props = $props();
 
 	let canvas: HTMLCanvasElement | undefined = $state();
+	let inView = $state(false); // 画布是否在视口（离屏位图清零省显存）
 	let colBright = '#8ceec8'; // mount 时由 CSS 变量覆盖（兜底值与主题一致）
 	let colAccent = '#3fd8a0';
 
 	function draw(): void {
-		if (!canvas) return;
+		if (!canvas || !inView) return;
 		const w = canvas.clientWidth;
 		const h = canvas.clientHeight;
 		if (!w || !h || !peaks || peaks.length === 0) return;
 
 		// 按 devicePixelRatio 缩放，保证高分屏清晰
 		const dpr = window.devicePixelRatio || 1;
-		canvas.width = Math.round(w * dpr);
-		canvas.height = Math.round(h * dpr);
+		const pw = Math.round(w * dpr);
+		const ph = Math.round(h * dpr);
+		if (canvas.width !== pw || canvas.height !== ph) {
+			canvas.width = pw;
+			canvas.height = ph;
+		}
 		const ctx = canvas.getContext('2d');
 		if (!ctx) return;
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -50,10 +56,11 @@
 		ctx.globalAlpha = 1;
 	}
 
-	// peaks / progress 变化即重绘
+	// peaks / progress / 可见性 变化即重绘
 	$effect(() => {
 		void peaks;
 		void progress;
+		void inView;
 		draw();
 	});
 
@@ -65,12 +72,22 @@
 		// 容器宽度变化（窗口缩放）时重绘
 		const ro = new ResizeObserver(() => draw());
 		ro.observe(canvas!);
-		// 进入视口（含 100px 预载边距）才拉 peaks，长列表省流量
+		let peaksFetched = false;
+		// 进入视口拉 peaks+重绘，离开即清零位图释放显存
 		const io = new IntersectionObserver(
 			(entries) => {
-				if (entries.some((e) => e.isIntersecting)) {
-					io.disconnect();
-					onvisible?.();
+				for (const e of entries) {
+					if (e.isIntersecting) {
+						inView = true;
+						if (!peaksFetched) {
+							peaksFetched = true;
+							onvisible?.(); // peaks 只需首见拉一次
+						}
+						draw();
+					} else {
+						inView = false;
+						if (canvas) canvas.width = 0; // 释放离屏位图
+					}
 				}
 			},
 			{ rootMargin: '100px' }

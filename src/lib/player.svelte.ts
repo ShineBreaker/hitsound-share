@@ -9,19 +9,35 @@ export class Player {
 	private audio: HTMLAudioElement | null = null;
 	private pendingSeek: number | null = null; // 待 metadata 就绪后应用的跳播比例
 	private durationHint: number | null = null; // 元数据时长（流式 mp3 的 audio.duration 可能是 Infinity）
+	private rafId = 0; // 播放中的 progress 刷新帧（0 = 未在跑）
 
 	private ensure(): HTMLAudioElement | null {
 		if (typeof Audio === 'undefined') return null;
 		if (!this.audio) {
 			const a = new Audio();
-			a.preload = 'metadata';
-			a.addEventListener('timeupdate', () => {
+			a.preload = 'auto'; // 连续缓冲：默认 metadata 可能播一半欠载
+			const update = () => {
 				const dur = this.durationHint ?? a.duration;
 				this.progress = Number.isFinite(dur) && dur > 0 ? a.currentTime / dur : 0;
+			};
+			// rAF 逐帧刷进度（timeupdate 仅 ~4Hz，波形进度条跳变）；只在播放中跑。
+			// 测试/SSR 无 requestAnimationFrame → 进度退回 timeupdate/seeked 驱动
+			const raf = typeof requestAnimationFrame === 'undefined' ? null : requestAnimationFrame;
+			const tick = () => {
+				update();
+				this.rafId = raf && !a.paused && !a.ended ? raf(tick) : 0;
+			};
+			a.addEventListener('play', () => {
+				this.paused = false;
+				if (raf && !this.rafId) this.rafId = raf(tick);
 			});
-			a.addEventListener('play', () => (this.paused = false));
-			a.addEventListener('pause', () => (this.paused = true));
+			a.addEventListener('pause', () => {
+				this.paused = true;
+				update(); // 暂停即落地当前进度
+			});
 			a.addEventListener('ended', () => this.reset());
+			a.addEventListener('seeked', update); // 跳播完成后进度立即到位
+			a.addEventListener('timeupdate', update); // 后台标签页 rAF 被节流时的兜底
 			// 播放失败（blob 缺失等）：复位，不留假播放态
 			a.addEventListener('error', () => this.reset());
 			a.addEventListener('loadedmetadata', () => {

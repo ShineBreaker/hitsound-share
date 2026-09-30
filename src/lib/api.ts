@@ -160,22 +160,34 @@ export function removeAdmin(osuId: number): Promise<void> {
 }
 
 // 波形批量取数：16ms 窗口内请求的 id 合并成一次 /api/waveform?ids=… 调用（每批 ≤100，
-// 与端点上限一致）；模块级缓存存 Promise 防同 id 并发重复请求；失败 resolve null 并逐出缓存
+// 与端点上限一致）；模块级缓存存 Promise 防同 id 并发重复请求；失败 resolve null 并逐出缓存。
+// Map 插入序即 LRU 序：超 2000 条逐出最旧（200×8B peaks，封顶 ≈3.2MB）
 const PEAKS_FLUSH_MS = 16;
 const PEAKS_BATCH = 100;
+const PEAKS_CACHE_MAX = 2000;
 const peaksCache = new Map<string, Promise<number[] | null>>();
 let peaksQueue = new Map<string, Array<(v: number[] | null) => void>>();
 let peaksTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function fetchPeaks(id: string): Promise<number[] | null> {
 	let p = peaksCache.get(id);
-	if (!p) {
+	if (p) {
+		peaksCache.delete(id); // LRU：命中移到最新位
+		peaksCache.set(id, p);
+	} else {
 		p = new Promise<number[] | null>((resolve) => {
 			const list = peaksQueue.get(id) ?? [];
 			list.push(resolve);
 			peaksQueue.set(id, list);
 		});
 		peaksCache.set(id, p);
+		if (peaksCache.size > PEAKS_CACHE_MAX) {
+			for (const k of peaksCache.keys()) {
+				if (peaksQueue.has(k)) continue; // 在途请求不逐出（resolver 会丢）
+				peaksCache.delete(k);
+				break;
+			}
+		}
 		peaksTimer ??= setTimeout(() => void flushPeaks(), PEAKS_FLUSH_MS);
 	}
 	return p;

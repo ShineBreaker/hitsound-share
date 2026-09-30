@@ -113,8 +113,16 @@
 		onplay?.(f);
 	}
 
-	// 波形按需缓存：undefined=未请求 null=无波形 number[]=已加载
+	// 波形按需缓存：undefined=未请求 null=无波形 number[]=已加载；
+	// 只保留当前 files 里存在的 id——翻页/删除/换文件夹后不留陈旧行
 	let peaksMap = $state<Record<string, number[] | null | undefined>>({});
+
+	$effect(() => {
+		const ids = new Set(files.map((f) => f.id));
+		for (const k of Object.keys(peaksMap)) {
+			if (!ids.has(k)) delete peaksMap[k];
+		}
+	});
 
 	async function wantPeaks(id: string): Promise<void> {
 		if (id in peaksMap) return;

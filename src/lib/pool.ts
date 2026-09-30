@@ -24,3 +24,23 @@ export async function mapPool<T>(
 	await Promise.all(workers);
 	if (failed) throw firstErr;
 }
+
+// MessageChannel 宏任务让出：setTimeout(0) 每次 ~4ms，MC 端口 ~0.05ms
+// （SSR/测试环境无 MessageChannel 时退 setTimeout）
+const mc = typeof MessageChannel === 'undefined' ? null : new MessageChannel();
+const mcQueue: Array<() => void> = [];
+if (mc) {
+	mc.port1.onmessage = () => mcQueue.shift()?.();
+}
+
+/** 交还主线程一次的宏任务：长同步循环（CRC/峰值扫描）分片间调用防帧冻结 */
+export function yieldMain(): Promise<void> {
+	const { promise, resolve } = Promise.withResolvers<void>();
+	if (mc) {
+		mcQueue.push(resolve);
+		mc.port2.postMessage(null);
+	} else {
+		setTimeout(resolve, 0);
+	}
+	return promise;
+}

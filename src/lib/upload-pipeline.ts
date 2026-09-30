@@ -54,37 +54,54 @@ export function fileExt(name: string): string {
 	return i === -1 ? '' : name.slice(i + 1).toLowerCase();
 }
 
-/** wav 手解 RIFF 头：fmt 块的声道/采样率/位深 + byteRate（算时长） */
+/** wav 手解 RIFF 头：fmt 块的声道/采样率/位深/格式标签 + byteRate（算时长）+ data 块位置 */
 export function parseWavHeader(d: Uint8Array): {
+	formatTag: number; // 1=PCM 3=float 0xFFFE=extensible（子格式在 fmt+24）；其余回退解码器
 	channels: number;
 	sampleRate: number;
 	bitDepth: number;
 	byteRate: number;
+	dataOffset: number; // data 块内容起点（0 = 未找到）
+	dataSize: number;
 } | null {
 	if (d.length < 12) return null;
 	const tag = (o: number) => String.fromCharCode(d[o], d[o + 1], d[o + 2], d[o + 3]);
 	if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return null;
 	const dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
 	let off = 12;
+	let fmt: { formatTag: number; channels: number; sampleRate: number; bitDepth: number; byteRate: number } | null =
+		null;
+	let dataOffset = 0;
+	let dataSize = 0;
 	while (off + 8 <= d.length) {
 		const id = tag(off);
 		const size = dv.getUint32(off + 4, true);
 		if (id === 'fmt ' && off + 24 <= d.length) {
-			return {
+			let formatTag = dv.getUint16(off + 8, true);
+			// extensible：真格式藏在子格式 GUID 前两字节（fmt+24）
+			if (formatTag === 0xfffe && off + 26 <= d.length && size >= 40) {
+				formatTag = dv.getUint16(off + 32, true);
+			}
+			fmt = {
+				formatTag,
 				channels: dv.getUint16(off + 10, true),
 				sampleRate: dv.getUint32(off + 12, true),
-				bitDepth: dv.getUint16(off + 22, true),
-				byteRate: dv.getUint32(off + 16, true)
+				byteRate: dv.getUint32(off + 16, true),
+				bitDepth: dv.getUint16(off + 22, true)
 			};
+		} else if (id === 'data') {
+			dataOffset = off + 8;
+			dataSize = Math.min(size, d.length - dataOffset);
 		}
+		if (fmt && dataOffset > 0) break;
 		off += 8 + size + (size % 2); // chunk 按 2 字节对齐
 	}
-	return null;
+	return fmt ? { ...fmt, dataOffset, dataSize } : null;
 }
 
 export async function sha256Hex(d: Uint8Array): Promise<string> {
-	// slice 复制防 ArrayBuffer 被 detach（digest 不 detach，防御性）
-	const h = await crypto.subtle.digest('SHA-256', d.slice().buffer as ArrayBuffer);
+	// digest 不 detach 入参 buffer，直接传视图（省一份全量拷贝）
+	const h = await crypto.subtle.digest('SHA-256', d as Uint8Array<ArrayBuffer>);
 	return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
@@ -125,7 +142,7 @@ async function buildEntry(
 		hash,
 		size: d.length,
 		ext,
-		durationS: dec?.durationS ?? (wav && wav.byteRate > 0 ? d.length / wav.byteRate : null),
+		durationS: dec?.durationS ?? (wav && wav.byteRate > 0 ? (wav.dataSize || d.length) / wav.byteRate : null),
 		sampleRate: dec?.sampleRate ?? wav?.sampleRate ?? null,
 		bitDepth: dec ? (ext === 'wav' ? (wav?.bitDepth ?? null) : null) : (wav?.bitDepth ?? null),
 		channels: dec?.channels ?? wav?.channels ?? null,
