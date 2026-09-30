@@ -1,51 +1,65 @@
 # osucad 预览：仓库拓扑与更新工作流
 
-实时预览由本仓库内嵌 `/osucad/` 静态产物提供，源码不在本仓库——在独立的 osucad 仓库里。
-本文档说明两仓库的关系、如何改预览、如何构建回拷、以及如何验证。
+实时预览由本仓库内嵌 `/osucad/` 静态产物提供，源码在独立的 osucad 仓库里，
+以 **git submodule** 收在 `vendor/osucad`，方便一次 clone 拿到全部源码。
 
 ## 仓库拓扑
 
 ```
-Projects/osu/
-├── hitsound-share            本仓库（SvelteKit + CF Pages）
-│   ├── static/osucad/        ← 提交入库的构建产物（Pages 直接部署，勿手改）
-│   ├── static/osucad.build-info.txt  ← 本次构建的源码溯源（自动生成）
-│   └── scripts/build-osucad-preview.sh / smoke-osucad-preview.mjs
-└── osucad                    独立 clone（vite workspace 单仓）
-    ├── remote fork  → github.com/ShineBreaker/osucad.git（我们的工作仓库）
-    ├── remote origin → github.com/minetoblend/osucad.git（上游，只同步）
-    ├── 工作分支 feat/hitsound-preview（fork 推送目标）
-    └── apps/hitsound-preview  ← 预览 app 源码
+hitsound-share                本仓库（SvelteKit + CF Pages）
+├── vendor/osucad             ← submodule → github.com/ShineBreaker/osucad.git
+│   └── 分支 feat/hitsound-preview（指针钉在某个 commit，见 git submodule status）
+├── static/osucad/            ← 提交入库的构建产物（Pages 直接部署，勿手改）
+├── static/osucad.build-info.txt  ← 本次构建的源码溯源（自动生成）
+└── scripts/build-osucad-preview.sh / smoke-osucad-preview.mjs
 ```
 
-- osucad 路径默认取 `<本仓库>/../osucad`，可用 `OSUCAD_DIR=/path/to/osucad` 覆盖
-- osucad 的提交推 `fork` 的 `feat/hitsound-preview`；不要推 `origin`（上游不是我们的）
-- hitsound-share 不推远端的工作流不变：`static/osucad/` + `build-info.txt` 一起提交即可
+osucad 侧远端：
 
-## 产物与部署的关系
+- `fork`/默认 remote → `github.com/ShineBreaker/osucad.git`（我们的工作仓库）
+- 上游 `minetoblend/osucad` 只用于同步，**不要推**
+- 工作分支固定 `feat/hitsound-preview`
 
-- `static/osucad/` 是 `apps/hitsound-preview` 的 `vite build` 产物（PixiJS/WebGL2），**已提交入库**——Pages 部署只拿本仓库内容，构建机器不需要 osucad 源码。
-- `static/osucad.build-info.txt` 由构建脚本生成，记录 `osucad remote / branch / commit / 未提交改动数 / 构建时间`——想知道某个线上预览是从哪份源码出的，看这个文件。
-- 只改 hitsound-share 侧代码**不需要**动 osucad；只有要改预览器行为/贴图/采样语义时才走下面的流程。
+构建脚本找源码的顺序：`OSUCAD_DIR` 环境变量 → `vendor/osucad` 子模块 →
+`../osucad` 兄弟 clone。日常开发建议在旁边单独 clone 一份 osucad 随便折腾，
+发版构建用 vendor 里的钉住版本（或先 bump 指针再构建）。
+
+## 克隆与部署
+
+```bash
+# 只部署（直接用已提交的 static/osucad 产物）：什么都不用做
+git clone <repo> && pnpm install && pnpm build
+
+# 要改预览器/重建产物：连子模块一起拉
+git clone --recurse-submodules <repo>
+# 或已 clone：git submodule update --init vendor/osucad
+```
+
+Cloudflare Pages 部署**不需要**子模块——产物已随库提交，Pages 不初始化
+submodule 也没影响。
 
 ## 更新工作流（改预览器）
 
-### 1. 准备
+### 1. 源码就位
+
+二选一：
 
 ```bash
-git clone git@github.com:ShineBreaker/osucad.git ../osucad   # 放到本仓库旁边
-cd ../osucad && git checkout feat/hitsound-preview
-git remote add origin https://github.com/minetoblend/osucad.git   # 可选：同步上游
-pnpm install
+git submodule update --init vendor/osucad     # 用库内钉住的版本
+# 或自己 clone 到旁边，开发更自由：
+git clone -b feat/hitsound-preview git@github.com:ShineBreaker/osucad.git ../osucad
 ```
+
+`cd <osucad> && pnpm install`
 
 ### 2. 开发与迭代
 
 ```bash
-cd ../osucad/apps/hitsound-preview && pnpm dev    # http://localhost:4201
+cd <osucad>/apps/hitsound-preview && pnpm dev    # http://localhost:4201
 ```
 
-vite 配了 `resolve.conditions: ["source"]`，workspace 包直接编译 `src/*.ts`，改 framework/core/ruleset-osu 源码即时生效，无需先 build 包。
+vite 配了 `resolve.conditions: ["source"]`，workspace 包直接编译 `src/*.ts`，
+改 framework/core/ruleset-osu 源码即时生效，无需先 build 包。
 
 页面加载谱面走 postMessage 协议：`window.postMessage({type:"hs:load",name,bytes:ArrayBuffer})`
 （顶层窗口 `window.parent === window`，自检通过；`hs:update` 同协议热更新）。
@@ -54,7 +68,7 @@ vite 配了 `resolve.conditions: ["source"]`，workspace 包直接编译 `src/*.
 ### 3. 测试
 
 ```bash
-cd ../osucad/apps/hitsound-preview && pnpm vitest run   # golden 采样测试 6 个
+cd <osucad>/apps/hitsound-preview && pnpm vitest run   # golden 采样测试
 ```
 
 `vitest.config.ts` 把 `@osucad/*` 别名到 src，node 环境可跑。golden 测试用真实
@@ -64,7 +78,7 @@ cd ../osucad/apps/hitsound-preview && pnpm vitest run   # golden 采样测试 6 
 ### 4. 构建回拷 + 本仓库验证
 
 ```bash
-cd ../hitsound-share
+cd hitsound-share
 bash scripts/build-osucad-preview.sh   # 构建 → 回拷 static/osucad → 写 build-info.txt
 pnpm test && pnpm build                # 本仓库回归（必须全绿）
 pnpm dev --port 4521 &                 # 冒烟需要 dev server
@@ -75,10 +89,18 @@ node scripts/smoke-osucad-preview.mjs  # CDP 全链路冒烟
 `cad:stats.hits`（采样命中数）→ 二次导入 `hs:update`（不重载 iframe、保播放位置）→
 难度切换 → 音量通道。全绿无 `cad:error` 才算完成。
 
-### 5. 提交（两侧）
+### 5. 提交与指针同步（两侧）
 
-osucad 侧推 fork 分支；hitsound-share 侧提交 `static/osucad/` + `build-info.txt`
-+ 脚本/文档改动。两端语言保持中文 conventional commit。
+- osucad 侧：提交并推 fork `feat/hitsound-preview`
+- hitsound-share 侧：提交 `static/osucad/` + `static/osucad.build-info.txt` +
+  脚本/文档改动
+- **若 osucad 推了新提交**，顺手 bump 子模块指针保持一致：
+  `git -C vendor/osucad pull origin feat/hitsound-preview`（或 checkout 目标 sha），
+  然后 `git add vendor/osucad` 提交指针
+
+`build-info.txt` 记录的是**实际构建所用源码**（remote/branch/sha/dirty），
+子模块指针记录的是**库内钉住的版本**——两者语义不同：开发期可以不一致
+（用兄弟 clone 构建时 dirty 会如实记进去），发版时应保持指针==构建源。
 
 ## 资产管线
 
@@ -131,14 +153,12 @@ BeatmapSkin → `sourceChanged` → 所有 SkinnableDrawable/SkinnableSound 重�
 - 部分组件是「代理渲染」（ProxyDrawable + RenderLayer）：源 drawable 离开
   PIXI 树时代理必须 detach，否则 seek 后残留幽灵图像（修过，勿回退）
 
-## 为什么不收 submodule
+## submodule 使用注意
 
-osucad 不挂 git submodule，理由：
-
-- 部署产物已 vendored（`static/osucad` 提交入库），站点不依赖 osucad 源码可达
-- osucad 是**活跃共开发**仓库（独立分支持续演进、常有未提交 WIP），submodule
-  指针每次构建都要两仓库同步，且指针 SHA 对 dirty 构建必然撒谎
-- `build-info.txt` 记录了实际构建的 remote/branch/sha/dirty，溯源更诚实
-
-若将来出现「第三方需要按 pin 复现构建」或「CI 校验产物==源码」的需求，再评估
-submodule（推荐挂 `vendor/osucad` 指 fork 分支）或 subtree。
+- 指针与构建产物可能短暂不一致（比如在兄弟 clone 里构建过但还没推/没 bump）——
+  以 `build-info.txt` 为构建真相，指针为「库内钉住版本」，发版前对齐
+- `git submodule update --remote` 会把 vendor 拉到 `feat/hitsound-preview` 最新，
+  再 `git add vendor/osucad` 提交新指针；配合 `build-osucad-preview.sh` 重建产物
+- 子模块内做开发也可以，但注意 git 的 detached HEAD 习惯（先
+  `git checkout feat/hitsound-preview` 再动手）；改完记得：osucad 推远端 →
+  本仓库 bump 指针 → 重建产物，三步缺一不可

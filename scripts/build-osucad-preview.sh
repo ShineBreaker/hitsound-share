@@ -1,17 +1,27 @@
 #!/usr/bin/env bash
 # 构建 osu!cad 实时预览 iframe 产物 → static/osucad/
-# 源码在 osucad 仓库 apps/hitsound-preview（默认 ../osucad，OSUCAD_DIR 可覆盖）；
+# 源码在 osucad 仓库 apps/hitsound-preview：默认 vendor/osucad 子模块
+# （git submodule update --init 拉取），回落 ../osucad 兄弟 clone，OSUCAD_DIR 可覆盖；
 # static/osucad/ 是提交进仓库的构建产物，Pages 随站部署，CI 不需要 nx/pnpm 工具链。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OSUCAD="${OSUCAD_DIR:-$ROOT/../osucad}"
-APP="$OSUCAD/apps/hitsound-preview"
 
-if [ ! -d "$APP" ]; then
-	echo "找不到 $APP —— 请先 clone osucad 到 $OSUCAD（或设 OSUCAD_DIR）" >&2
-	exit 1
+# 源码位置：优先 vendor/osucad 子模块（别人 clone 后 submodule update --init 即有），
+# 否则回落兄弟目录 ../osucad（自己日常开发 clone），OSUCAD_DIR 可显式覆盖
+OSUCAD="${OSUCAD_DIR:-}"
+if [ -z "$OSUCAD" ]; then
+	if [ -d "$ROOT/vendor/osucad/apps/hitsound-preview" ]; then
+		OSUCAD="$ROOT/vendor/osucad"
+	elif [ -d "$ROOT/../osucad/apps/hitsound-preview" ]; then
+		OSUCAD="$ROOT/../osucad"
+	else
+		echo "找不到 osucad 源码——执行 git submodule update --init vendor/osucad，" >&2
+		echo "或把 osucad clone 到 ../osucad，或用 OSUCAD_DIR 指定" >&2
+		exit 1
+	fi
 fi
+APP="$OSUCAD/apps/hitsound-preview"
 
 cd "$APP"
 pnpm build
