@@ -1,9 +1,10 @@
-// runUpload：fake fetch 编排 manifest/PUT/done 三段交互
+// prepareUpload / runUpload：fake fetch 编排 manifest/PUT/done 三段交互
 // 覆盖：happy path、同 hash 只 PUT 一次、503 重试、403 → put_failed、
-// 附加模式 done 404 package_not_found → append_gone、zip 解包跳过非音频计数
+// 附加模式 done 404 package_not_found → append_gone、zip 解包跳过非音频计数、
+// 唯一顶层文件夹剥前缀与 topDir 判定
 import { describe, it, expect } from 'vitest';
 import { zipSync } from 'fflate';
-import { runUpload, UploadError, type UploadEvent } from './upload-pipeline';
+import { runUpload, prepareUpload, UploadError, type UploadEvent, type PreparedUpload } from './upload-pipeline';
 import { sha256Hex } from './upload-pipeline';
 
 const wavBytes = (tag: number): Uint8Array => {
@@ -15,7 +16,16 @@ const wavBytes = (tag: number): Uint8Array => {
 };
 
 const decodeMeta = async () => null; // 测试环境不解码
-const loadWasm = async () => new ArrayBuffer(0); // zip 用不到
+// wasm 加载器占位：测试只打 zip 路径，rar / 7z wasm 不会被触达
+const loadWasm = {
+	unrar: async () => new ArrayBuffer(0),
+	sz: async () => new ArrayBuffer(0)
+};
+
+/** 单调用点：prepare（同名源文件），onEvent 可选收集 parsing 段事件 */
+async function prep(name: string, bytes: Uint8Array, onEvent?: (e: UploadEvent) => void): Promise<PreparedUpload> {
+	return prepareUpload({ name, bytes }, { loadWasm, decodeMeta }, onEvent ?? (() => {}));
+}
 
 interface Req {
 	url: string;
@@ -73,7 +83,7 @@ describe('runUpload', () => {
 		]);
 		const { events, onEvent } = collect();
 		await runUpload(
-			{ name: 'a.wav', bytes: wavBytes(1) },
+			await prep('a.wav', wavBytes(1), onEvent),
 			targetNew,
 			{ fetch, loadWasm, decodeMeta, retryDelaysMs: [0, 0] },
 			onEvent
@@ -105,7 +115,7 @@ describe('runUpload', () => {
 			{ url: '/api/upload/done', method: 'POST', status: 200 }
 		]);
 		await runUpload(
-			{ name: 'pack.zip', bytes: zip },
+			await prep('pack.zip', zip),
 			targetNew,
 			{ fetch, loadWasm, decodeMeta, retryDelaysMs: [0, 0] },
 			collect().onEvent
@@ -126,7 +136,7 @@ describe('runUpload', () => {
 			{ url: '/api/upload/done', method: 'POST', status: 200 }
 		]);
 		await runUpload(
-			{ name: 'a.wav', bytes: wavBytes(2) },
+			await prep('a.wav', wavBytes(2)),
 			targetNew,
 			{ fetch, loadWasm, decodeMeta, retryDelaysMs: [0, 0] },
 			collect().onEvent
@@ -146,7 +156,7 @@ describe('runUpload', () => {
 			{ url: 'https://r2.test/put', method: 'PUT', status: 403, times: 10 }
 		]);
 		const err = await runUpload(
-			{ name: 'a.wav', bytes: wavBytes(3) },
+			await prep('a.wav', wavBytes(3)),
 			targetNew,
 			{ fetch, loadWasm, decodeMeta, retryDelaysMs: [0, 0] },
 			collect().onEvent
@@ -168,7 +178,7 @@ describe('runUpload', () => {
 			{ url: '/api/upload/done', method: 'POST', status: 404, times: 10, payload: { error: 'package_not_found' } }
 		]);
 		const err = await runUpload(
-			{ name: 'a.wav', bytes: wavBytes(4) },
+			await prep('a.wav', wavBytes(4)),
 			{ kind: 'append', packageId: 'T' },
 			{ fetch, loadWasm, decodeMeta, retryDelaysMs: [0, 0] },
 			collect().onEvent
@@ -195,7 +205,7 @@ describe('runUpload', () => {
 		]);
 		const { events, onEvent } = collect();
 		await runUpload(
-			{ name: 'pack.zip', bytes: zip },
+			await prep('pack.zip', zip, onEvent),
 			targetNew,
 			{ fetch, loadWasm, decodeMeta, retryDelaysMs: [0, 0] },
 			onEvent
@@ -215,11 +225,50 @@ describe('runUpload', () => {
 			}
 		]);
 		const err = await runUpload(
-			{ name: 'a.wav', bytes: wavBytes(6) },
+			await prep('a.wav', wavBytes(6)),
 			targetNew,
 			{ fetch, loadWasm, decodeMeta, retryDelaysMs: [0, 0] },
 			collect().onEvent
 		).catch((e: unknown) => e);
 		expect((err as UploadError).code).toBe('too_many_entries');
+	});
+});
+
+describe('prepareUpload：唯一顶层文件夹提升', () => {
+	it('全部条目落在同一顶层文件夹 → 剥前缀 + topDir 返回文件夹名（非音频也参与判定）', async () => {
+		const p = await prep(
+			'pack.zip',
+			zipSync({
+				'我的皮肤/normal-hitnormal.wav': wavBytes(1),
+				'我的皮肤/子类/soft-hitclap.wav': wavBytes(2),
+				'我的皮肤/readme.txt': new Uint8Array([104, 105])
+			})
+		);
+		expect(p.topDir).toBe('我的皮肤');
+		expect(p.entries.map((e) => e.path)).toEqual(['normal-hitnormal.wav', '子类/soft-hitclap.wav']);
+	});
+
+	it('顶层有散文件 → 不提升，路径原样', async () => {
+		const p = await prep(
+			'pack.zip',
+			zipSync({ 'MySkin/a.wav': wavBytes(1), 'top.wav': wavBytes(2) })
+		);
+		expect(p.topDir).toBeNull();
+		expect(p.entries.map((e) => e.path).sort()).toEqual(['MySkin/a.wav', 'top.wav']);
+	});
+
+	it('多个顶层文件夹 → 不提升', async () => {
+		const p = await prep(
+			'pack.zip',
+			zipSync({ 'A/a.wav': wavBytes(1), 'B/b.wav': wavBytes(2) })
+		);
+		expect(p.topDir).toBeNull();
+		expect(p.entries).toHaveLength(2);
+	});
+
+	it('单音频文件 → 无提升，path 即文件名', async () => {
+		const p = await prep('a.wav', wavBytes(1));
+		expect(p.topDir).toBeNull();
+		expect(p.entries.map((e) => e.path)).toEqual(['a.wav']);
 	});
 });

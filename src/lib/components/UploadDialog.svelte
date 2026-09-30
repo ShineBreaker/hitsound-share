@@ -1,17 +1,23 @@
 <script lang="ts">
-	// 上传对话框（纯 UI 壳）：文件选择/拖放 → confirm（新建 / 附加到现有分组）→
-	// runUpload（$lib/upload-pipeline：解包 → sha256+元数据 → manifest → 直传 → done，
-	// 进度与日志经 onEvent 上报）→ 完成刷新。v4 起不再上传 original.zip。
+	// 上传对话框（纯 UI 壳）：文件选择/拖放 → prepareUpload（解包+哈希，confirm 阶段
+	// 需要解包结果预填默认分组名：唯一顶层文件夹名优先于压缩包文件名）→ confirm
+	// （新建 / 附加到现有分组）→ runUpload（manifest → 直传 → done，进度与日志经
+	// onEvent 上报）→ 完成刷新。v4 起不再上传 original.zip。
 	// 忙碌中 Esc 不关对话框（防误触中断进行中上传）
 	import { onMount } from 'svelte';
 	import { loadUnrarWasm } from '$lib/unrar-wasm';
+	import { load7zWasm } from '$lib/seven-zip-wasm';
 	import { decodeMeta } from '$lib/audio-meta';
 	import {
 		runUpload,
+		prepareUpload,
 		UploadError,
 		ARCHIVE_EXTS,
+		AUDIO_EXTS,
 		fileExt,
-		type UploadTarget
+		type UploadTarget,
+		type UploadEvent,
+		type PreparedUpload
 	} from '$lib/upload-pipeline';
 	import { t } from '$lib/i18n';
 
@@ -27,7 +33,8 @@
 	let progressN = $state(0);
 	let progressTotal = $state(0);
 	let skippedCount = $state(0);
-	let pendingFile = $state<File | null>(null); // confirm 阶段持有的单音频文件
+	let pendingFile = $state<File | null>(null); // 解析/confirm 阶段持有的源文件
+	let prepared = $state<PreparedUpload | null>(null); // prepareUpload 产物，confirm 后交给 runUpload
 	let groupName = $state('');
 	let fileInput = $state<HTMLInputElement | undefined>();
 	let dropOver = $state(false); // 拖放区悬停高亮
@@ -102,64 +109,89 @@
 		errorKey = key;
 	}
 
-	/** 选定文件（文件选择器 / 拖放区共用入口） */
-	function chooseFile(file: File): void {
+	/** 选定文件（文件选择器 / 拖放区共用入口）：立即解包+哈希，完成才进 confirm */
+	async function chooseFile(file: File): Promise<void> {
 		const ext = fileExt(file.name);
 		addLog('info', `选择文件 ${file.name}（${fmtBytes(file.size)}）`);
-		if (!ARCHIVE_EXTS.includes(ext) && !['wav', 'ogg', 'mp3'].includes(ext)) {
+		if (!ARCHIVE_EXTS.includes(ext) && !AUDIO_EXTS.includes(ext)) {
 			addLog('error', `不支持的扩展名：${ext || '（无）'}`);
 			fail('bad_ext');
 			return;
 		}
-		// 分组名预填：压缩包用文件名，单文件默认上传者用户名
 		pendingFile = file;
-		groupName = ARCHIVE_EXTS.includes(ext)
-			? file.name.replace(/\.(zip|rar)$/i, '')
-			: username;
+		prepared = null;
 		mode = 'new';
 		appendTarget = '';
+		phase = 'parsing';
+		progressN = 0;
+		progressTotal = 0;
+		skippedCount = 0;
+		try {
+			prepared = await prepareUpload(
+				{ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) },
+				{ loadWasm: { unrar: loadUnrarWasm, sz: load7zWasm }, decodeMeta },
+				onPipelineEvent
+			);
+		} catch (err) {
+			fail(err instanceof UploadError ? err.code : 'network');
+			return;
+		}
+		// 分组名预填：解包出的唯一顶层文件夹名 > 压缩包文件名 > 单文件默认上传者用户名
+		groupName =
+			prepared.topDir ??
+			(ARCHIVE_EXTS.includes(ext) ? file.name.replace(/\.(zip|rar|7z)$/i, '') : username);
 		phase = 'confirm';
 		void loadMyPackages();
 	}
 
+	/** prepareUpload / runUpload 共用的过程事件入口 */
+	function onPipelineEvent(e: UploadEvent): void {
+		if (e.type === 'phase') phase = e.phase;
+		else if (e.type === 'progress') {
+			progressN = e.n;
+			progressTotal = e.total;
+		} else if (e.type === 'skipped') skippedCount = e.count;
+		else addLog(e.level, e.msg);
+	}
+
 	function onFileChosen(e: Event): void {
 		const file = (e.target as HTMLInputElement).files?.[0];
-		if (file) chooseFile(file);
+		if (file) void chooseFile(file);
 	}
 
 	function confirmUpload(): void {
 		const file = pendingFile;
+		const p = prepared;
 		const name = groupName.trim();
-		if (!file) return;
+		if (!file || !p) return;
 		if (mode === 'append') {
 			if (!appendTarget) return;
-			pendingFile = null;
 			addLog('info', `附加到现有分组：${appendTarget}`);
-			void startUpload(file, { kind: 'append', packageId: appendTarget });
+			void startUpload(p, { kind: 'append', packageId: appendTarget });
 			return;
 		}
 		if (!name) return;
-		pendingFile = null;
 		addLog('info', `分组名：${name}`);
-		void startUpload(file, { kind: 'new', name });
+		void startUpload(p, { kind: 'new', name });
 	}
 
-	async function startUpload(file: File, target: UploadTarget): Promise<void> {
-		phase = 'parsing';
+	async function startUpload(p: PreparedUpload, target: UploadTarget): Promise<void> {
+		pendingFile = null; // confirm 已完成，源文件字节都在 prepared 里
+		phase = 'uploading';
+		progressN = 0;
+		progressTotal = 0;
 		skippedCount = 0;
 		try {
-			await runUpload({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) }, target, {
-				fetch: fetch.bind(window),
-				loadWasm: loadUnrarWasm,
-				decodeMeta
-			}, (e) => {
-				if (e.type === 'phase') phase = e.phase;
-				else if (e.type === 'progress') {
-					progressN = e.n;
-					progressTotal = e.total;
-				} else if (e.type === 'skipped') skippedCount = e.count;
-				else addLog(e.level, e.msg);
-			});
+			await runUpload(
+				p,
+				target,
+				{
+					fetch: fetch.bind(window),
+					loadWasm: { unrar: loadUnrarWasm, sz: load7zWasm },
+					decodeMeta
+				},
+				onPipelineEvent
+			);
 			phase = 'done';
 		} catch (err) {
 			fail(err instanceof UploadError ? err.code : 'network');
@@ -169,6 +201,7 @@
 	function reset(): void {
 		phase = 'idle';
 		pendingFile = null;
+		prepared = null;
 		logs = [];
 		copyState = 'idle';
 		if (fileInput) fileInput.value = '';
@@ -235,7 +268,7 @@
 					e.preventDefault();
 					dropOver = false;
 					const f = e.dataTransfer?.files?.[0];
-					if (f) chooseFile(f);
+					if (f) void chooseFile(f);
 				}}
 				onkeydown={(e) => {
 					if (e.key === 'Enter' || e.key === ' ') {
@@ -259,7 +292,7 @@
 				<input
 					bind:this={fileInput}
 					type="file"
-					accept=".zip,.rar,.wav,.ogg,.mp3"
+					accept=".zip,.rar,.7z,.wav,.ogg,.mp3"
 					class="vh"
 					onchange={onFileChosen}
 				/>

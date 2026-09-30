@@ -105,7 +105,7 @@ const zh = {
 	'help.g.help': '?',
 	'help.g.help.fx': '打开本帮助',
 	'help.upload.title': '上传',
-	'help.upload.body': '登录 osu! 后可上传 zip / rar 整包或单个音频；支持附加到已有分组；同内容文件自动去重秒传。',
+	'help.upload.body': '登录 osu! 后可上传 zip / rar / 7z 整包或单个音频；支持附加到已有分组；同内容文件自动去重秒传。',
 	'help.restartTour': '重新开始引导',
 
 	// 新手引导
@@ -155,7 +155,7 @@ const zh = {
 	'upload.title': '上传音效',
 	'upload.pick': '选择 zip 或音频文件',
 	'upload.drop': '把文件拖到此处，或点击选择',
-	'upload.hint': '支持 zip / rar 整包或单个 wav / ogg / mp3 文件，压缩包内非音频文件会被跳过（音频累计 ≤1GB）',
+	'upload.hint': '支持 zip / rar / 7z 整包或单个 wav / ogg / mp3 文件，压缩包内非音频文件会被跳过（音频累计 ≤1GB）',
 	'upload.groupName': '分组名称',
 	'upload.start': '开始上传',
 	'upload.mode.label': '上传方式',
@@ -181,6 +181,7 @@ const zh = {
 	'upload.log.copyHint': '复制日志全文，可粘贴到 GitHub issue 反馈',
 
 	// 上传管线日志行（upload-pipeline 产出；PUT 只记 origin+path，签名参数不落日志）
+	'upload.log.topDir': '压缩包内是唯一顶层文件夹「{name}」：已将其内容提升为最大层级，分组名默认取该文件夹名',
 	'upload.log.unpacked': '解包完成：{n} 个音频 / 跳过 {skipped} 个',
 	'upload.log.noAudio': '压缩包内没有可收录的音频文件（wav / ogg / mp3）',
 	'upload.log.parsed': '解析完成：{n} 个文件（{ext}，sha256 {hash}…）',
@@ -207,9 +208,9 @@ const zh = {
 	'upload.err.too_many_entries': '文件数超出限制（≤5000）',
 	'upload.err.too_large': '音频总大小超出限制（≤1GB）',
 	'upload.err.bad_path': '存在非法路径的文件',
-	'upload.err.bad_ext': '不支持的文件格式（仅 zip / rar / wav / ogg / mp3）',
-	'upload.err.unknown_format': '文件内容不是可识别的压缩包或与扩展名不符（7z 及其他格式请先转为 zip）',
-	'upload.err.format_unsupported': '暂不支持该压缩格式（7z / 分卷 / zip64），请重新打包为 zip 或 rar',
+	'upload.err.bad_ext': '不支持的文件格式（仅 zip / rar / 7z / wav / ogg / mp3）',
+	'upload.err.unknown_format': '文件内容不是可识别的压缩包或与扩展名不符',
+	'upload.err.format_unsupported': '暂不支持该压缩格式（分卷 / zip64），请重新打包为 zip',
 	'upload.err.encrypted': '压缩包已加密，请上传未加密的压缩包',
 	'upload.err.corrupt': '压缩包数据损坏或格式异常，无法解包，请重新压缩后再试',
 	'upload.err.bad_hash': '文件校验信息无效',

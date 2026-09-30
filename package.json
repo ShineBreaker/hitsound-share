@@ -24,6 +24,7 @@
 		"wrangler": "^4.142.0"
 	},
 	"dependencies": {
+		"7z-wasm": "^1.2.0",
 		"@fontsource/comfortaa": "^5.3.0",
 		"node-unrar-js": "^2.0.2"
 	}
