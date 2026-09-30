@@ -82,6 +82,14 @@ const zh = {
 	'osz.err.format_unsupported': '暂不支持该压缩格式（分卷 / zip64），请重新打包为 zip',
 	'osz.err.encrypted': '压缩包已加密，请导入未加密的包',
 	'osz.err.corrupt': '谱面包数据损坏或格式异常，无法解包',
+	// osu!cad 实时预览：悬浮窗内嵌预览（谱面+音效+note 联动），格子改动热刷新
+	'cad.preview': '实时预览',
+	'cad.previewHint': '在 osu!cad 中实时预览谱面与音效，改格子自动刷新',
+	'cad.title': 'osu!cad 实时预览',
+	'cad.loading': '正在装载谱面…',
+	'cad.noAudio': '此谱面无音轨',
+	'cad.seek': '进度',
+	'cad.close': '关闭预览',
 
 	// 多选
 	'sel.bar': '已选 {count} 个 · 按 Q–V 或点击组装面板格子加入',

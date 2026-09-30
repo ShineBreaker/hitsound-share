@@ -19,6 +19,8 @@
 		type KitItem
 	} from '$lib/kit.svelte';
 	import { osz, OszError, type OszEntry } from '$lib/osz.svelte';
+	import { cad } from '$lib/cad.svelte';
+	import CadPreview from '$lib/components/CadPreview.svelte';
 	import { loadUnrarWasm } from '$lib/unrar-wasm';
 	import { load7zWasm } from '$lib/seven-zip-wasm';
 	import { selection, assignSelection } from '$lib/selection.svelte';
@@ -179,6 +181,7 @@
 
 	function removeOsz(): void {
 		if (player.current?.startsWith('osz:')) player.stop(); // 只停自己的 key
+		cad.close(); // 谱面集没了，预览窗一并关掉
 		osz.clear();
 		oszErr = '';
 	}
@@ -373,6 +376,14 @@
 					{t('osz.listToggle')}
 					<span class="caret" aria-hidden="true">{oszListOpen ? '▾' : '▸'}</span>
 				</button>
+				<button
+					class="btn"
+					class:primary={cad.open}
+					title={t('cad.previewHint')}
+					onclick={() => (cad.open ? cad.close() : cad.openPreview())}
+				>
+					{t('cad.preview')}
+				</button>
 				{#if ezState === 'packing'}
 					<button
 						class="btn primary packing"
@@ -522,6 +533,11 @@
 			{/each}
 		</div>
 	</div>
+{/if}
+
+<!-- osu!cad 实时预览悬浮窗：与组装面板独立，格子改动经 cad 桥热更新进谱面播放器 -->
+{#if cad.open}
+	<CadPreview />
 {/if}
 
 <style>

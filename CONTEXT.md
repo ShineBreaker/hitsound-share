@@ -86,3 +86,7 @@ _Avoid_: 谱面包、地图包、上传包
 **覆盖（Overlay）**:
 格子项落进谱面集的合并规则：目标文件名去掉扩展名的 stem（不区分大小写）与谱面集根目录音频条目的 stem 相同 → 该条目被剔除、新音效写包根；未命中 → 直接写入包根。子目录音频是 .osu 按显式路径引用的独立资源，不参与覆盖。
 _Avoid_: 合并、替换上传
+
+**实时预览（osu!cad）**:
+谱面集栏「实时预览」打开悬浮窗，内嵌 `/osucad/`（osucad 仓库 `apps/hitsound-preview` 的静态构建产物，经 `scripts/build-osucad-preview.sh` 生成并提交入库）——同源 iframe + postMessage 协议（`hs:*` 入 / `cad:*` 出），`cad.svelte.ts` 是唯一桥接入口。推送内容 = `osz.buildBytes` 的当前合并包（与导出 .osz 同一产物）；格子/谱面集变化防抖重发 `hs:update`，iframe 内重建 Skin 触发 `sourceChanged` 完成热刷新，不重载页面、保留播放位置。谱面、音效、note 在 osu!cad 规则集自动游玩下联动预览。
+_Avoid_: 编辑器、导入编辑器
