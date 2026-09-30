@@ -20,20 +20,33 @@ describe('Kit', () => {
 		expect(k.count).toBe(2);
 	});
 
-	it('add 用空序号；addNumbered 从 0 起字面编号', () => {
+	it('add 用空序号；addNumbered 逻辑序号从 1 起、1 渲染为无后缀', () => {
 		k.add('drum/hitnormal', f('solo'));
 		expect(k.cells['drum/hitnormal'][0].suffix).toBe('');
 
 		k.addNumbered('soft/hitwhistle', [f('x'), f('y'), f('z')]);
-		expect(k.cells['soft/hitwhistle'].map((i) => i.suffix)).toEqual(['0', '1', '2']);
-		expect(k.entries.map((e) => e.target)).toContain('soft-hitwhistle0.wav');
+		// 逻辑组下标 1/2/3 → 存储 '', '2', '3'（lazer 只为 ≥2 查后缀名）
+		expect(k.cells['soft/hitwhistle'].map((i) => i.suffix)).toEqual(['', '2', '3']);
+		const targets = k.entries.map((e) => e.target);
+		expect(targets).toContain('soft-hitwhistle.wav');
+		expect(targets).toContain('soft-hitwhistle2.wav');
+		expect(targets).toContain('soft-hitwhistle3.wav');
+		expect(targets).not.toContain('soft-hitwhistle1.wav');
 	});
 
-	it('addNumbered 从格内最大数字序号续编，空序号不计入', () => {
-		k.addNumbered('drum/hitclap', [f('a'), f('b')]); // 0,1
-		k.add('drum/hitclap', f('manual')); // '' 不影响续编
-		k.addNumbered('drum/hitclap', [f('c'), f('d')]); // 2,3
-		expect(k.cells['drum/hitclap'].map((i) => i.suffix)).toEqual(['0', '1', '', '2', '3']);
+	it('手填序号 1 与空序号同义（都生成无后缀名）', () => {
+		k.addNumbered('normal/hitnormal', [f('a'), f('b')]);
+		k.setSuffix('normal/hitnormal', k.cells['normal/hitnormal'][1].uid, '1');
+		const targets = k.entries.map((e) => e.target);
+		expect(targets).toEqual(['normal-hitnormal.wav', 'normal-hitnormal.wav']);
+		expect(k.dupTargets.has('normal-hitnormal.wav')).toBe(true);
+	});
+
+	it("addNumbered 从格内最大逻辑序号续编，空序号记作 1", () => {
+		k.addNumbered('drum/hitclap', [f('a'), f('b')]); // '', '2'
+		k.add('drum/hitclap', f('manual')); // '' → 逻辑 1
+		k.addNumbered('drum/hitclap', [f('c'), f('d')]); // 续编 3,4
+		expect(k.cells['drum/hitclap'].map((i) => i.suffix)).toEqual(['', '2', '', '3', '4']);
 	});
 
 	it('remove 移除单项、clear 清空、setSuffix 改序号', () => {
@@ -53,16 +66,16 @@ describe('Kit', () => {
 		k.add('normal/slidertick', f('c'));
 		expect(k.entries.map((e) => e.target)).toEqual([
 			'normal-slidertick.wav',
-			'drum-sliderslide0.wav',
-			'drum-sliderslide1.wav'
+			'drum-sliderslide.wav',
+			'drum-sliderslide2.wav'
 		]);
 	});
 
 	it('dupTargets 标出 zip 内重名（含序号冲突）', () => {
 		k.add('normal/hitnormal', f('a')); // normal-hitnormal.wav
-		k.addNumbered('normal/hitnormal', [f('b')]); // normal-hitnormal0.wav
+		k.addNumbered('normal/hitnormal', [f('b'), f('c')]); // 续编 '2','3' → 不重名
 		expect(k.dupTargets.size).toBe(0);
-		k.add('normal/hitnormal', f('c')); // 又一个 normal-hitnormal.wav
+		k.add('normal/hitnormal', f('d')); // 又一个 normal-hitnormal.wav
 		expect(k.dupTargets.has('normal-hitnormal.wav')).toBe(true);
 	});
 

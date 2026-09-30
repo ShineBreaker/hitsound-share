@@ -10,6 +10,7 @@
 	import { DND_FILE_MIME, type KitDragData } from '$lib/api';
 	import {
 		kit,
+		kitTarget,
 		KIT_ROWS,
 		KIT_COLS,
 		CELL_LETTERS,
@@ -475,7 +476,7 @@
 						onclick={(e) => clickCell(e, key)}
 					>
 						{#each kit.cells[key] ?? [] as it (it.uid)}
-							{@const target = `${row}-${col}${it.suffix}.${it.format}`}
+							{@const target = kitTarget(row, col, it)}
 							<div
 								class="chip"
 								role="listitem"

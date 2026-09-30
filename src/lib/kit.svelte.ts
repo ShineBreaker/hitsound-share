@@ -74,6 +74,11 @@ export function cellForKey(e: KeyboardEvent): CellKey | null {
 	return CELL_KEYS[e.code] ?? null;
 }
 
+/** 目标文件名：序号 '1' 与 '' 同义（lazer 只为组下标 ≥2 查后缀名，`hitnormal1.wav` 不会被读取） */
+export function kitTarget(row: KitRow, col: KitCol, it: KitItem): string {
+	return `${row}-${col}${it.suffix === '1' ? '' : it.suffix}.${it.format}`;
+}
+
 let uidSeq = 0;
 
 export class Kit {
@@ -89,18 +94,21 @@ export class Kit {
 		this.cells[key] = [...(this.cells[key] ?? []), { ...file, uid: ++uidSeq, suffix: '' }];
 	}
 
-	/** 批量入格（多选/多文件拖入）：序号从 0 起字面编号；格内已有数字序号则从最大值+1 续编（'' 不参与） */
+	/** 批量入格（多选/多文件拖入）：逻辑序号从 1 起（osu! 音效组下标 1 = 无后缀名）；
+	 *  格内已有项按逻辑序号取最大值续编（'' 记作 1），1 渲染为 '' 不写进文件名 */
 	addNumbered(key: string, files: KitFile[]): void {
 		if (files.length === 0) return;
 		const list = this.cells[key] ?? [];
-		let max = -1;
+		let max = 0;
 		for (const it of list) {
-			if (it.suffix === '') continue;
-			const n = Number(it.suffix);
+			const n = it.suffix === '' ? 1 : Number(it.suffix);
 			if (Number.isInteger(n) && n > max) max = n;
 		}
 		let next = max + 1;
-		const items = files.map((f) => ({ ...f, uid: ++uidSeq, suffix: String(next++) }));
+		const items = files.map((f) => {
+			const n = next++;
+			return { ...f, uid: ++uidSeq, suffix: n === 1 ? '' : String(n) };
+		});
 		this.cells[key] = [...list, ...items];
 	}
 
@@ -135,13 +143,13 @@ export class Kit {
 		this.flashTimer = setTimeout(() => (this.flashKey = ''), 900);
 	}
 
-	/** 展平为打包清单（按行×列稳定序）：target = <行>-<列><序号>.<格式> */
+	/** 展平为打包清单（按行×列稳定序）：target = <行>-<列><序号>.<格式>（序号规则见 kitTarget） */
 	get entries(): KitEntry[] {
 		const out: KitEntry[] = [];
 		for (const row of KIT_ROWS) {
 			for (const col of KIT_COLS) {
 				for (const it of this.cells[`${row}/${col}`] ?? []) {
-					out.push({ uid: it.uid, id: it.id, target: `${row}-${col}${it.suffix}.${it.format}` });
+					out.push({ uid: it.uid, id: it.id, target: kitTarget(row, col, it) });
 				}
 			}
 		}
