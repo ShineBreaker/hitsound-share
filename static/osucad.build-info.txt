@@ -1,5 +1,5 @@
 osucad: https://github.com/ShineBreaker/osucad.git
 branch: main
-commit: 193c1da7df2ca88a1d1422ac903ae02aca8b1f0d
+commit: 02b75bfd4e74578f2914546c1e5e1bf02971e268
 uncommitted-changes: 0
-built-at: 2026-09-30T14:27:07Z
+built-at: 2026-09-30T15:23:59Z
