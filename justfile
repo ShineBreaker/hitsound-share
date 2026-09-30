@@ -49,9 +49,9 @@ pages-dev: build
 
 # ── osucad 预览（docs/osucad.md）────────────────────
 
-# 初始化 vendor 子模块（clone 后没拉子模块时）
+# 初始化 vendor 子模块（.gitmodules 标了 update=none 让 CI 跳过，需 -c 覆盖强制拉取）
 osucad-init:
-    git submodule update --init vendor/osucad
+    git -c submodule.vendor/osucad.update=checkout submodule update --init vendor/osucad
 
 # 预览器 dev server（vite source 模式，改 framework/core 源码即时生效）:4201
 osucad-dev:
@@ -84,7 +84,7 @@ osucad-smoke:
 
 # osucad 推了新提交后的一条命令：bump 指针 → 重建产物 → 单测+构建 → 冒烟 → 暂存
 osucad-release:
-    git submodule update --remote vendor/osucad
+    git -C vendor/osucad pull origin main
     bash scripts/build-osucad-preview.sh
     @just verify
     @just osucad-smoke

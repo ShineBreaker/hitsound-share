@@ -3,3 +3,4 @@
 	url = https://github.com/ShineBreaker/osucad.git
 	branch = main
 	shallow = true
+	update = none
