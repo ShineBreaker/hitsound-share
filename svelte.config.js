@@ -12,6 +12,7 @@ const config = {
 		// 自动追加 nonce/hash，无需手写 script-src；字体/CSS/API/音频均为同源，走 default-src 兜底。
 		// connect-src 额外放行 R2 S3 端点：上传链路浏览器预签名直传（PUT）需要。
 		// script-src 显式列出：'self'（模块脚本）+ 'wasm-unsafe-eval'（rar 解包的 UnRAR wasm 实例化）
+		// media-src 放行 blob:：谱面集音频试听是内存解压出的 blob URL（不上传不外发）
 		csp: {
 			mode: 'auto',
 			directives: {
@@ -19,7 +20,8 @@ const config = {
 				'object-src': ['none'],
 				'base-uri': ['self'],
 				'script-src': ['self', 'wasm-unsafe-eval'],
-				'connect-src': ['self', 'https://*.r2.cloudflarestorage.com']
+				'connect-src': ['self', 'https://*.r2.cloudflarestorage.com'],
+				'media-src': ['self', 'blob:']
 			}
 		}
 	}
