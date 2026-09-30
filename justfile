@@ -30,16 +30,17 @@ verify: test build
 
 # 初始化/重置本地 D1 模拟库（schema.sql）
 db-init:
-    wrangler d1 execute hitsound-share-db --local --file schema.sql
+    ./node_modules/.bin/wrangler d1 execute hitsound-share-db --local --file schema.sql
 
-# 用构建产物起本地 Functions（临时目录 + 假密钥，隔离真实 .env——见 AGENTS.md 已知坑）
+# 用构建产物起本地 Functions :8799（临时目录脱离 .env 搜索链 + 假密钥 + 独立状态——见 deployment.md 七节）
 pages-dev: build
     #!/usr/bin/env bash
     set -euo pipefail
     TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-    cp wrangler.toml "$TMP/"
-    cd "$TMP"
-    wrangler pages dev "{{ justfile_directory() }}/.svelte-kit/cloudflare" --port 8799 \
+    cp wrangler.toml "$TMP/"   # bindings（R2/D1）从 toml 读
+    cd "$TMP"                  # cwd 在仓库外 → wrangler 找不到真实 .env
+    "{{ justfile_directory() }}/node_modules/.bin/wrangler" pages dev \
+      "{{ justfile_directory() }}/.svelte-kit/cloudflare" --port 8799 \
       --persist-to "$TMP/state" \
       -b OSU_CLIENT_ID=dev -b OSU_CLIENT_SECRET=dev \
       -b SESSION_SECRET=dev-secret-0123456789abcdef01234567 \

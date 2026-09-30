@@ -82,6 +82,8 @@
 
 本项目基于 SvelteKit 5 + Cloudflare Pages（Functions）+ R2 + D1 构建。技术细节、本地开发环境与协作约定见 [AGENTS.md](AGENTS.md)，领域术语见 [CONTEXT.md](CONTEXT.md)，架构决策见 [docs/adr/](docs/adr/)。
 
+常用命令封装在 [justfile](justfile)：装个 `just` 后 `just` 或 `just --list` 查看，`just setup` 一键初始化本地环境，`just verify` 跑提交前门禁（单测+构建）。
+
 ## License
 
 [MIT](LICENSE)

@@ -93,13 +93,15 @@ flowchart TD
 
 ## 七、本地验证环境（改 API 层后实测用）
 
+快捷命令（justfile 已封装下列安全姿势）：`just setup`（装依赖+子模块+本地 D1）、`just db-init`（重置本地模拟库）、`just pages-dev`（构建+起本地 Functions :8799）。
+
 ```sh
 direnv allow && pnpm install
 wrangler d1 execute hitsound-share-db --local --file schema.sql   # 本地模拟库
 pnpm build
 ```
 
-- 用产物起 Functions：**在 `.svelte-kit/` 目录级**放一份改好输出目录（`cloudflare`）的 `wrangler.toml` 再 `wrangler pages dev cloudflare --port 8799 --persist-to <独立目录> -b KEY=VALUE…`——`_worker.js` 的相对 import 依赖同级 `output/` 与 `cloudflare-tmp/`，直接指向 `.svelte-kit/cloudflare` 会报 resolve 失败。
-- ⚠️ `wrangler pages dev` 会自动加载当前目录 `.env` 把真实密钥注入本地进程：本地 e2e 一律在临时目录启动，`--persist-to` 指独立状态目录，密钥只用 `-b` 传假值。
+- 用产物起 Functions：`just pages-dev` 的做法是 cwd 放在仓库外的临时目录（`.env` 搜索链断裂，真实密钥零注入），`wrangler.toml` 副本提供 bindings，产物目录以绝对路径传入（`_worker.js` 的相对 import 依赖其同级 `output/` 与 `cloudflare-tmp/`）。手工版等价做法：在 `.svelte-kit/` 目录级放一份改好输出目录（`cloudflare`）的 `wrangler.toml` 再 `wrangler pages dev cloudflare --port 8799 --persist-to <独立目录> -b KEY=VALUE…`。
+- ⚠️ `wrangler pages dev` 会向上级目录搜索并自动加载 `.env` 把真实密钥注入本地进程（cwd 在 `.svelte-kit/` 也会命中 `../.env`）：本地 e2e 一律在仓库外的临时目录启动，`--persist-to` 指独立状态目录，密钥只用 `-b` 传假值。
 - 本地模拟状态在 `.wrangler/state`；schema 变更后旧库要整个重置再跑 `schema.sql`（CREATE IF NOT EXISTS 不补列）。
 - 访问门在本地同样生效：`-b SITE_DEFAULT_PASSWORD=<测试值>` 模拟启用。

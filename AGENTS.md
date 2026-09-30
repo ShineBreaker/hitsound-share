@@ -11,7 +11,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 - `just` / `just --list`：全部常用命令的封装（justfile），一键流程见下；装依赖仍是 `pnpm install`
 - `pnpm dev` / `pnpm build` / `pnpm preview`；`pnpm test`（vitest，`src/**/*.test.ts`）——改动后 `pnpm test` 与 `pnpm build` 都须通过（一条命令：`just verify`）；无 lint 脚本
 - `wrangler d1 execute hitsound-share-db --local --file schema.sql`：初始化本地 D1 模拟库；`--command "SQL"` 单条执行（线上操作用 `--remote`）
-- `wrangler pages dev .svelte-kit/cloudflare --port 8799 -b KEY=VALUE…`：用构建产物起本地 Functions（bindings 从 wrangler.toml 读，env 变量用 `-b` 传）
+- `just pages-dev`：构建产物起本地 Functions :8799（已内置临时目录+假密钥的安全姿势）；手工等价做法与原因见 `docs/deployment.md` 七节
 - `wrangler r2 object put/get/list hitsound-files/<key> --local/--remote`：R2 对象操作（不加 `--local` 的默认仍是本地，**线上必须显式 `--remote`**）
 - pnpm 钉在 package.json 的 `packageManager`（12.3.4）；只用 pnpm，不用 npm/yarn 安装依赖
 
@@ -64,7 +64,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 - **子请求预算**：免费计划单请求上限 50 子请求，D1/R2 binding 调用都计入——服务端任何循环逐条 `.run()`/`.get()`/`R2.delete()` 的写法在大包（2400+ 文件）必崩，一律 `batch()` 分批（250 语句/批）、R2 `delete(keys[])`（≤1000 key/次）；核验读 R2 的策略与预算见 `verify.ts` 头注与 ADR 0004
 - Svelte 5 `$state` 代理：`(obj[k] ??= []).push(x)` 的 `??=` 返回的是裸数组，push 不触发响应式（「第一次拖不进格子」的根因）——写入一律整值重赋值（`obj[k] = [...(obj[k] ?? []), x]`）或先赋值再经 `obj[k]` 复读
 - 真实拖放验证：合成 DataTransfer 事件测不出浏览器层面的拖放问题，须用 Xvfb + headful Chromium + xdotool 做真实输入（松手前要持续移动鼠标，否则 Chromium 会取消拖放）；CDP `setEmulatedMedia` 不支持 `hover`/`pointer`，触屏设备特征需用 `--blink-settings=primaryHoverType=1,availableHoverTypes=1,primaryPointerType=2,availablePointerTypes=2` 启动
-- `wrangler pages dev` 会自动加载当前目录的 `.env`，把真实密钥注入本地进程：本地 e2e 一律在临时目录（复制 wrangler.toml）启动，`--persist-to` 指向独立状态目录，只用 `-b` 传假值
+- `wrangler pages dev` 会向上级目录搜索 `.env` 并自动加载，把真实密钥注入本地进程（cwd 放 `.svelte-kit/` 也会命中 `../.env`）：本地 e2e 一律在**仓库外**的临时目录（复制 wrangler.toml）启动，`--persist-to` 指向独立状态目录，只用 `-b` 传假值——`just pages-dev` 已封装
 - headless Chromium 下 `showSaveFilePicker` 存在但永不 resolve：自动化测整包下载需先在页面内把它置 `undefined`，走 Blob 兜底
 - `wrangler d1 execute` 可能假失败（报语法错但实际写入成功）：执行后必须 SELECT 验证；批量写入改走 D1 HTTP API
 - `wrangler r2 object` 线上操作必须加 `--remote`，否则写进本地模拟器；本地模拟状态在 `.wrangler/state`，schema 变更后旧库要整个重置再跑 schema.sql（CREATE IF NOT EXISTS 不会补列）
