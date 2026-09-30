@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { validateManifest, magicOk, MAX_ENTRIES } from './upload';
+import {
+	validateManifest,
+	magicOk,
+	MAX_AUDIO_BYTES,
+	MAX_ENTRIES,
+	MAX_FILE_BYTES
+} from './upload';
 
 const H = 'a'.repeat(64);
 
@@ -63,6 +69,25 @@ describe('validateManifest', () => {
 			ok: false,
 			error: 'bad_size'
 		});
+	});
+
+	it('单文件超 10MB → file_too_large；放宽上限（管理员）后仅受单包累计约束', () => {
+		const big = MAX_FILE_BYTES + 1;
+		expect(validateManifest(manifest({ entries: [entry({ size: big })] }))).toEqual({
+			ok: false,
+			error: 'file_too_large'
+		});
+		const relaxed = validateManifest(manifest({ entries: [entry({ size: big })] }), {
+			maxFileBytes: MAX_AUDIO_BYTES
+		});
+		expect(relaxed.ok).toBe(true);
+		// 放宽后单包累计 1GB 仍是硬限（两条 512MB+1 累计破限）
+		const half = MAX_AUDIO_BYTES / 2 + 1;
+		expect(
+			validateManifest(manifest({ entries: [entry({ size: half }), entry({ size: half })] }), {
+				maxFileBytes: MAX_AUDIO_BYTES
+			})
+		).toEqual({ ok: false, error: 'too_large' });
 	});
 
 	it('条目数：空 / 超 5000 被拒', () => {

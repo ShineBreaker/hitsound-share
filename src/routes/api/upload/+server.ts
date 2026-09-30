@@ -8,6 +8,7 @@ import type { D1PreparedStatement } from '@cloudflare/workers-types';
 import { getEnv, blobKey } from '$lib/server/media';
 import { getSecrets, uploadCapable } from '$lib/server/env';
 import { requireUser } from '$lib/server/guard';
+import { isAdmin } from '$lib/server/admin';
 import { lazyCleanupPending } from '$lib/server/packages';
 import { reserveBlobStatements, committedHashes } from '$lib/server/ledger';
 import {
@@ -39,8 +40,14 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 	if (g instanceof Response) return g;
 	const session = g.session;
 
+	// 管理员豁免单文件上限与每日配额（全局水位不豁免：防付费的硬闸）；
+	// 判定失败按非管理员处理（保守：宁可不放行）
+	const admin = await isAdmin(env.DB, secrets, session.osuId).catch(() => false);
+
 	// manifest 强校验
-	const validated = validateManifest(await request.json().catch(() => null));
+	const validated = validateManifest(await request.json().catch(() => null), {
+		maxFileBytes: admin ? MAX_AUDIO_BYTES : undefined
+	});
 	if (!validated.ok) return json({ error: validated.error }, { status: 400 });
 	const m = validated.value;
 	const logicalSize = m.entries.reduce((acc, e) => acc + e.size, 0);
@@ -91,14 +98,14 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 		.run();
 
 	// 配额 + 全局水位合并为单条条件 INSERT（单语句原子，关闭并发 TOCTOU 窗口）：
-	// - 每用户 24h 内（含 pending 及附加影子包）< 5 包
-	// - blobs 账本 SUM（含 pending 预插行，保守）+ visible 包 zip 存量 + 本包 logical_size < 8GB
+	// - 每用户 24h 内（含 pending 及附加影子包）< 5 包；管理员（?9=1）豁免
+	// - blobs 账本 SUM（含 pending 预插行，保守）+ visible 包 zip 存量 + 本包 logical_size < 10GB（不豁免）
 	const packageId = crypto.randomUUID();
 	const ins = await env.DB.prepare(
 		`INSERT INTO packages (id, name, uploader_osu_id, size_bytes, logical_size, file_count, status, append_to)
 		 SELECT ?1, ?2, ?3, 0, ?4, ?5, 'pending', ?6
-		 WHERE (SELECT COUNT(*) FROM packages
-		        WHERE uploader_osu_id = ?3 AND created_at >= datetime('now', '-1 day')) < ?7
+		 WHERE (?9 = 1 OR (SELECT COUNT(*) FROM packages
+		        WHERE uploader_osu_id = ?3 AND created_at >= datetime('now', '-1 day')) < ?7)
 		   AND ((SELECT COALESCE(SUM(size), 0) FROM blobs)
 		      + (SELECT COALESCE(SUM(size_bytes), 0) FROM packages WHERE status = 'visible')
 		      + ?4) < ?8`
@@ -111,19 +118,22 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 			m.entries.length,
 			m.appendTo,
 			PKGS_PER_DAY,
-			GLOBAL_CAP_BYTES
+			GLOBAL_CAP_BYTES,
+			admin ? 1 : 0
 		)
 		.run();
 	if ((ins.meta?.changes ?? 0) === 0) {
 		// 闸门未过：复查区分原因，给出准确错误码（复查仅为报错，不再作为防线）
-		const quota = await env.DB.prepare(
-			`SELECT COUNT(*) AS c FROM packages
-			 WHERE uploader_osu_id = ?1 AND created_at >= datetime('now', '-1 day')`
-		)
-			.bind(session.osuId)
-			.first<{ c: number }>();
-		if ((quota?.c ?? 0) >= PKGS_PER_DAY) {
-			return json({ error: 'daily_limit' }, { status: 429 });
+		if (!admin) {
+			const quota = await env.DB.prepare(
+				`SELECT COUNT(*) AS c FROM packages
+				 WHERE uploader_osu_id = ?1 AND created_at >= datetime('now', '-1 day')`
+			)
+				.bind(session.osuId)
+				.first<{ c: number }>();
+			if ((quota?.c ?? 0) >= PKGS_PER_DAY) {
+				return json({ error: 'daily_limit' }, { status: 429 });
+			}
 		}
 		return json({ error: 'storage_full' }, { status: 507 });
 	}

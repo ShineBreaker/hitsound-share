@@ -47,7 +47,21 @@ export function fetchFiles(
 	return getJSON(`/api/files?${q}`);
 }
 
-export function fetchConfig(): Promise<{ uploadEnabled: boolean }> {
+/** 站点配置：上传开关 + 限制常量 + 存储池用量；dailyPackagesUsed 仅登录时非 null */
+export interface SiteConfig {
+	uploadEnabled: boolean;
+	limits: {
+		maxFileBytes: number;
+		maxPackageBytes: number;
+		maxEntries: number;
+		dailyPackages: number;
+		storageCapBytes: number;
+	};
+	storageUsedBytes: number | null;
+	dailyPackagesUsed: number | null;
+}
+
+export function fetchConfig(): Promise<SiteConfig> {
 	return getJSON('/api/config');
 }
 

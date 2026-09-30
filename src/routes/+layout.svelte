@@ -142,7 +142,11 @@
 </div>
 
 {#if showUpload}
-	<UploadDialog onclose={() => (showUpload = false)} username={me?.username ?? ''} />
+	<UploadDialog
+		onclose={() => (showUpload = false)}
+		username={me?.username ?? ''}
+		isAdmin={me?.isAdmin ?? false}
+	/>
 {/if}
 {#if showMy}
 	<MyPackages onclose={() => (showMy = false)} />

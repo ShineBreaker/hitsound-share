@@ -11,11 +11,12 @@ export const MIME_BY_EXT: Record<AudioExt, string> = {
 	mp3: 'audio/mpeg'
 };
 
-// 防滥用上限（按真实素材校准：lasse 库 497MB/2429 文件）
+// 防滥用上限（按真实素材校准：lasse 库 497MB/2429 文件；线上最大单文件 7.3MB）
 export const MAX_ENTRIES = 5000;
+export const MAX_FILE_BYTES = 10 * 1024 * 1024; // 单文件 ≤10MB（管理员豁免）
 export const MAX_AUDIO_BYTES = 1024 * 1024 * 1024; // 单包音频累计 ≤1GB
-export const GLOBAL_CAP_BYTES = 8 * 1024 * 1024 * 1024; // 全局水位 ≥8GB 拒新上传
-export const PKGS_PER_DAY = 5; // 每用户 5 包/天
+export const GLOBAL_CAP_BYTES = 10 * 1024 * 1024 * 1024; // 全局水位：R2 免费额度 10GB，写后不得超
+export const PKGS_PER_DAY = 5; // 每用户 5 包/天（管理员豁免）
 export const PENDING_TTL_H = 24; // pending 懒清理阈值
 
 export interface ManifestEntry {
@@ -46,13 +47,19 @@ function intOrNull(v: unknown, min: number, max: number): number | null {
 	return isFiniteNum(v) && v >= min && v <= max ? Math.round(v) : null;
 }
 
+/** 单文件上限可选项：管理员上传放宽到 MAX_AUDIO_BYTES（等效只受单包累计约束） */
+export interface ValidateOpts {
+	maxFileBytes?: number;
+}
+
 /**
  * manifest 强校验：条目数、路径安全（拒 ..、绝对路径、反斜杠）、扩展名白名单、
- * hash 形态（防注入 R2 key）、元数据范围、音频累计大小。
+ * hash 形态（防注入 R2 key）、元数据范围、单文件与音频累计大小。
  * appendTo（可选）为 uuid 形态；附加模式下 name 由服务端取目标包名，不校验。
  * 不通过返回中文原因码（前端映射文案）
  */
-export function validateManifest(body: unknown): Validated<Manifest> {
+export function validateManifest(body: unknown, opts: ValidateOpts = {}): Validated<Manifest> {
+	const maxFileBytes = opts.maxFileBytes ?? MAX_FILE_BYTES;
 	if (typeof body !== 'object' || body === null) return { ok: false, error: 'bad_body' };
 	const b = body as Record<string, unknown>;
 	const appendTo =
@@ -89,8 +96,8 @@ export function validateManifest(body: unknown): Validated<Manifest> {
 		if (typeof e.hash !== 'string' || !/^[0-9a-f]{64}$/.test(e.hash)) {
 			return { ok: false, error: 'bad_hash' };
 		}
-		if (!isFiniteNum(e.size) || e.size <= 0 || e.size > MAX_AUDIO_BYTES) {
-			return { ok: false, error: 'bad_size' };
+		if (!isFiniteNum(e.size) || e.size <= 0 || e.size > maxFileBytes) {
+			return { ok: false, error: e.size > maxFileBytes ? 'file_too_large' : 'bad_size' };
 		}
 		total += e.size;
 		if (total > MAX_AUDIO_BYTES) return { ok: false, error: 'too_large' };

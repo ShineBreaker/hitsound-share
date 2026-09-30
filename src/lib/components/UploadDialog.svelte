@@ -20,12 +20,14 @@
 		type PreparedUpload
 	} from '$lib/upload-pipeline';
 	import { t } from '$lib/i18n';
+	import { fetchConfig, type SiteConfig } from '$lib/api';
 
 	interface Props {
 		onclose: () => void;
 		username: string; // 单文件上传的默认分组名
+		isAdmin: boolean; // 管理员豁免每日配额与单文件上限（展示口径）
 	}
-	let { onclose, username }: Props = $props();
+	let { onclose, username, isAdmin }: Props = $props();
 
 	type Phase = 'idle' | 'confirm' | 'parsing' | 'uploading' | 'finalizing' | 'done' | 'error';
 	let phase = $state<Phase>('idle');
@@ -83,10 +85,27 @@
 	}
 
 	function fmtBytes(n: number): string {
+		if (n >= 1024 * 1024 * 1024) return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 		if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
 		if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
 		return `${n} B`;
 	}
+
+	// 配额与存储池用量（/api/config）：打开时与上传完成后各拉一次；失败仅不显示，不阻塞上传
+	let site = $state<SiteConfig | null>(null);
+	async function loadSite(): Promise<void> {
+		try {
+			site = await fetchConfig();
+		} catch {
+			site = null;
+		}
+	}
+	const storagePct = $derived.by(() => {
+		const used = site?.storageUsedBytes;
+		const cap = site?.limits.storageCapBytes;
+		if (used === null || used === undefined || !cap) return 0;
+		return Math.min(100, Math.round((used / cap) * 100));
+	});
 
 	async function copyLogs(): Promise<void> {
 		const text = logs.map((l) => `[${l.time}] ${l.level === 'error' ? '✗' : '·'} ${l.msg}`).join('\n');
@@ -181,19 +200,20 @@
 		progressN = 0;
 		progressTotal = 0;
 		skippedCount = 0;
-		try {
-			await runUpload(
-				p,
-				target,
-				{
-					fetch: fetch.bind(window),
-					loadWasm: { unrar: loadUnrarWasm, sz: load7zWasm },
-					decodeMeta
-				},
-				onPipelineEvent
-			);
-			phase = 'done';
-		} catch (err) {
+	try {
+		await runUpload(
+			p,
+			target,
+			{
+				fetch: fetch.bind(window),
+				loadWasm: { unrar: loadUnrarWasm, sz: load7zWasm },
+				decodeMeta
+			},
+			onPipelineEvent
+		);
+		phase = 'done';
+		void loadSite(); // 配额已消耗，刷新今日用量
+	} catch (err) {
 			fail(err instanceof UploadError ? err.code : 'network');
 		}
 	}
@@ -225,6 +245,7 @@
 	onMount(() => {
 		// 打开即聚焦首个控件（idle 阶段的拖放区 label）
 		cardEl?.querySelector<HTMLElement>('input, select, button, [tabindex]')?.focus();
+		void loadSite();
 		// Esc 关闭；忙碌中不响应（防误触中断进行中上传）
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key === 'Escape' && !busy) onclose();
@@ -392,6 +413,39 @@
 		{/if}
 
 		{#if !busy}
+			<!-- 配额与存储池用量（打开时与上传完成后刷新；拉取失败则整块隐藏） -->
+			{#if site}
+				<div class="quota">
+					{#if isAdmin}
+						<p class="q-line">{t('upload.quota.admin')}</p>
+					{:else if site.dailyPackagesUsed !== null}
+						<p class="q-line">
+							{t('upload.quota.daily', {
+								used: site.dailyPackagesUsed,
+								total: site.limits.dailyPackages
+							})}
+						</p>
+					{/if}
+					{#if site.storageUsedBytes !== null}
+						<p class="q-line">
+							{t('upload.storage', {
+								used: fmtBytes(site.storageUsedBytes),
+								total: fmtBytes(site.limits.storageCapBytes),
+								avail: fmtBytes(
+									Math.max(0, site.limits.storageCapBytes - site.storageUsedBytes)
+								)
+							})}
+						</p>
+						<div class="q-bar">
+							<div
+								class="q-fill"
+								class:hot={storagePct >= 85}
+								style:width={`${storagePct}%`}
+							></div>
+						</div>
+					{/if}
+				</div>
+			{/if}
 			<button class="dialog-close" aria-label={t('upload.close')} onclick={onclose}>×</button>
 		{/if}
 	</div>
@@ -506,6 +560,39 @@
 	/* 对话框内按钮统一大号尺寸 */
 	.row .btn {
 		padding: 6px 16px;
+	}
+
+	/* 配额与存储池用量（非忙碌阶段常驻卡片底部） */
+	.quota {
+		margin-top: 14px;
+		padding-top: 10px;
+		border-top: 1px solid var(--bg-l3);
+	}
+
+	.q-line {
+		margin: 2px 0;
+		color: var(--text-faint);
+		font-size: 12px;
+	}
+
+	/* 存储池迷你进度条：水位 ≥85% 转粉警示 */
+	.q-bar {
+		height: 4px;
+		margin-top: 6px;
+		border-radius: 999px;
+		background: var(--bg-inset);
+		overflow: hidden;
+	}
+
+	.q-fill {
+		height: 100%;
+		border-radius: 999px;
+		background: linear-gradient(90deg, var(--accent-deep), var(--accent));
+		transition: width 0.2s ease;
+	}
+
+	.q-fill.hot {
+		background: var(--accent-pink);
 	}
 
 	/* confirm 阶段：待上传文件名（凹陷行）+ 分组名输入 */
