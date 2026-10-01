@@ -1,4 +1,4 @@
-// 前端 API 封装：树 / 文件列表 / 波形（带缓存）/ 配置 / 整包下载清单 / 改名；
+// 前端 API 封装：树 / 文件列表 / 波形（带缓存）/ 配置 / 整包下载清单 / 改名 / 移动；
 // 含树构建（与后端聚合同口径）
 import type { FileRow, TreeNode, ZipManifest } from '$lib/types';
 import type { KitFile } from '$lib/kit.svelte';
@@ -108,9 +108,46 @@ function mutate(url: string, method: string, body?: unknown): Promise<void> {
 	return mutateJSON(url, method, body).then(() => undefined);
 }
 
-/** 大类改名（包名） */
-export function renamePackage(pkgId: string, name: string): Promise<void> {
-	return mutate(`/api/package/${encodeURIComponent(pkgId)}`, 'PATCH', { name });
+/** 包改名结果：merge=true 成功时 merged/targetId/deduped 有值（deduped = 被去重丢弃的文件 id） */
+export interface RenameResult {
+	ok: boolean;
+	merged?: boolean;
+	targetId?: string;
+	deduped?: string[];
+}
+
+/** 改名撞名（409 name_taken）：message 固定 'name_taken'，targetId = 将吸收本包的最老同名包 id */
+export class RenameConflictError extends Error {
+	readonly targetId: string;
+	constructor(targetId: string) {
+		super('name_taken');
+		this.name = 'RenameConflictError';
+		this.targetId = targetId;
+	}
+}
+
+/**
+ * 大类改名（包名）；merge=true 时把本包并入最老同名包（先撞 409 再带 merge 重试的流程见页面层）。
+ * 不走 mutateJSON：409 name_taken 的 body 里的 targetId 也得带出来，mutateJSON 只留 error 码——
+ * 故手写 fetch。约定不变：失败一律 throw，message = 服务端错误码；唯独 name_taken 抛
+ * RenameConflictError（instanceof 判别 + targetId 字段），其余错误码仍是普通 Error
+ */
+export async function renamePackage(
+	pkgId: string,
+	name: string,
+	merge = false
+): Promise<RenameResult> {
+	const res = await fetch(`/api/package/${encodeURIComponent(pkgId)}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(merge ? { name, merge } : { name })
+	});
+	if (!res.ok) {
+		const err = (await res.json().catch(() => ({}))) as { error?: string; targetId?: string };
+		if (err.error === 'name_taken') throw new RenameConflictError(err.targetId ?? '');
+		throw new Error(err.error ?? `HTTP ${res.status}`);
+	}
+	return (await res.json().catch(() => ({}))) as RenameResult;
 }
 
 /** 小类改名（包内文件夹，含子文件夹级联；to 已存在 = 合并） */
@@ -136,6 +173,27 @@ export function deleteFolder(pkgId: string, path: string): Promise<void> {
 /** 批量删除文件行（包主删自己包的 / 管理员任意，可跨包，≤500） */
 export function deleteFiles(ids: string[]): Promise<void> {
 	return mutate('/api/files', 'DELETE', { ids });
+}
+
+/** 移动结果：moved = 实际移动的文件数，deduped = 目标已有同内容而被去重丢弃的文件 id */
+export interface MoveResult {
+	moved: number;
+	deduped: string[];
+}
+
+/** 批量移动文件到目标包的目标小类（toFolder '' = 包根；服务端单次 ≤500，多则分片调用） */
+export function moveFiles(ids: string[], toPackage: string, toFolder: string): Promise<MoveResult> {
+	return mutateJSON('/api/files/move', 'POST', { ids, toPackage, toFolder });
+}
+
+/** 整个小类移动到目标包（fromFolder 非空；toFolder '' = 目标包根；含子文件夹级联） */
+export function moveFolder(
+	fromPackage: string,
+	fromFolder: string,
+	toPackage: string,
+	toFolder: string
+): Promise<MoveResult> {
+	return mutateJSON('/api/files/move', 'POST', { fromPackage, fromFolder, toPackage, toFolder });
 }
 
 export interface AdminRow {

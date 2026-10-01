@@ -14,6 +14,7 @@ const zh = {
 	'tree.empty': '暂无内容',
 	'tree.expand': '展开',
 	'tree.collapse': '折叠',
+	'tree.moveFolder': '移动小类',
 
 	// 文件表列头
 	'file.name': '文件名',
@@ -38,6 +39,7 @@ const zh = {
 	'action.downloadPackage': '下载整包',
 	'action.retry': '重试',
 	'action.rename': '重命名',
+	'action.cancel': '取消',
 	'rename.failed': '改名失败，请重试（可能名称无效或网络问题）',
 
 	// 删除（树节点 / 选中集）
@@ -47,6 +49,19 @@ const zh = {
 	'folder.confirmDelete': '确定删除小类「{name}」及其中全部文件？该操作不可恢复。',
 	'files.confirmDelete': '确定删除选中的 {count} 个文件？该操作不可恢复。',
 	'delete.failed': '删除失败，请重试',
+
+	// 移动（树小类 / 选中文件）与同名分组合并
+	'move.title': '移动到…',
+	'move.targetPkg': '目标分组',
+	'move.targetFolder': '目标小类',
+	'move.root': '（分组根目录）',
+	'move.submit': '移动',
+	'move.failed': '移动失败，请重试',
+	'pkg.confirmMerge':
+		'已存在同名分组「{name}」{ownerHint}，确定将当前分组并入吗？当前分组的文件会并入该分组，当前分组将被删除。',
+	'pkg.mergeTargetInvalid': '目标分组状态异常（可能是附加中的影子包），无法合并',
+	'pkg.mergeGone': '合并目标刚被删除或改动，请刷新后重试',
+	'pkg.mergeTargetForbidden': '同名分组的上传者不是你（且你也不是管理员），无法合并',
 
 	// 整包下载（浏览器按当前内容实时打包）
 	'download.packaging': '打包中 {n}/{total}…',
@@ -97,6 +112,7 @@ const zh = {
 	// 多选
 	'sel.bar': '已选 {count} 个 · 按 Q–Y/A–H/Z–N 或点击组装面板格子加入',
 	'sel.clear': '清除',
+	'sel.move': '移动所选',
 	'sel.delete': '删除所选',
 	'sel.row': '选择该行',
 	'sel.all': '全选 / 取消全选当前页',

@@ -1,7 +1,7 @@
 <script lang="ts">
 	// 目录树节点：递归渲染（Svelte 5 通过自引用 import 实现递归组件）。
-	// 包主/管理员 hover 可见行尾操作钮：改名（大类=包名，小类=文件夹末级段）/ 删除
-	// （大类=整包，小类=该文件夹及子文件夹全部文件）
+	// 包主/管理员 hover 可见行尾操作钮：改名（大类=包名，小类=文件夹末级段）/ 移动（仅小类）/
+	// 删除（大类=整包，小类=该文件夹及子文件夹全部文件）
 	import type { TreeNode } from '$lib/types';
 	import { t } from '$lib/i18n';
 	import { canManage, type Me } from '$lib/api';
@@ -18,6 +18,8 @@
 		onsubmit?: (key: string, name: string) => Promise<boolean>;
 		/** 点删除钮（确认与接口调用由父级负责；不传则隐藏删除钮） */
 		ondelete?: (node: TreeNode) => void;
+		/** 点移动钮（仅小类节点渲染；确认与接口调用由父级负责） */
+		onmove?: (node: TreeNode) => void;
 	}
 	let {
 		node,
@@ -27,7 +29,8 @@
 		editingKey = $bindable(''),
 		onselect,
 		onsubmit,
-		ondelete
+		ondelete,
+		onmove
 	}: Props = $props();
 
 	// 默认收缩到最小（只显示顶层包名），由用户点箭头/名字逐级展开
@@ -48,7 +51,14 @@
 	async function submitEdit(): Promise<void> {
 		const name = editValue.trim();
 		if (submitting) return;
-		if (!name || name === node.name) {
+		if (!name) {
+			editingKey = '';
+			return;
+		}
+		// Why 包节点不因「与当前名相同」短路：线上存在历史同名分组（各自独立成包），
+		// 提交同名名字是触发服务端「并入最老同名包」合并流程的入口——无他包同名时
+		// 服务端按 no-op 改名处理，无害。小类无该语义，行为保持不变
+		if (name === node.name && !node.isPackage) {
 			editingKey = '';
 			return;
 		}
@@ -116,6 +126,17 @@
 				<!-- Comfortaa 无 ✎ 字形（系统回落渲染各异），一律用内联 SVG -->
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
 			</button>
+			{#if !node.isPackage && onmove}
+				<!-- 移动钮仅小类有（整包移动 = 上传/附加的职责，不做包级搬移） -->
+				<button
+					class="iconbtn"
+					title={t('tree.moveFolder')}
+					aria-label={t('tree.moveFolder')}
+					onclick={() => onmove?.(node)}
+				>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9V7a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1"/><path d="M2 13h10"/><path d="m9 16 3-3-3-3"/></svg>
+				</button>
+			{/if}
 			{#if ondelete}
 				<button
 					class="iconbtn danger"
@@ -142,6 +163,7 @@
 			{onselect}
 			{onsubmit}
 			{ondelete}
+			{onmove}
 		/>
 	{/each}
 {/if}

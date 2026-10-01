@@ -8,6 +8,7 @@
 	import TreeView from '$lib/components/TreeView.svelte';
 	import FileTable from '$lib/components/FileTable.svelte';
 	import KitBuilder from '$lib/components/KitBuilder.svelte';
+	import MoveDialog, { type MoveMode } from '$lib/components/MoveDialog.svelte';
 	import {
 		fetchTree,
 		fetchFiles,
@@ -22,6 +23,10 @@
 		deletePackage,
 		deleteFolder,
 		deleteFiles,
+		moveFiles,
+		moveFolder,
+		RenameConflictError,
+		type RenameResult,
 		type TreePackage,
 		type Me
 	} from '$lib/api';
@@ -79,6 +84,8 @@
 		canManage(me, packages.find((x) => x.id === currentPkgId)?.uploaderOsuId ?? null)
 	);
 	let selDeleting = $state(false); // 批量删除进行中（防连点）
+	// 移动对话框：files = 多选所选，folder = 树小类（来源包 + 全路径）；null = 关闭
+	let moveState = $state<MoveMode | null>(null);
 
 	async function loadPage(key: string, append: boolean): Promise<void> {
 		const { pkg, folder } = parseNodeKey(key);
@@ -174,7 +181,9 @@
 
 	/**
 	 * 树节点改名提交（大类 = 包名；小类 = 文件夹末级段，父路径保留）。
-	 * 成功后强刷树；包 key 是 id 无需重映射，文件夹改名则重映射选中 key 并重载文件页
+	 * 包改名撞名（409 name_taken，body 带将吸收它的最老同名包 id）→ confirm 后带
+	 * merge=true 重提交：合并成功清掉被去重文件、选中迁到目标包对应层级；用户取消
+	 * 合并则静默关闭编辑态（不走红框）。成功后强刷树；文件夹改名重映射选中 key
 	 */
 	async function submitRename(key: string, newName: string): Promise<boolean> {
 		const { pkg, folder } = parseNodeKey(key);
@@ -183,20 +192,61 @@
 		// 改后的文件夹全路径（末级替换）
 		const slash = folder.lastIndexOf('/');
 		const newFolder = folder === '' ? name : slash === -1 ? name : `${folder.slice(0, slash)}/${name}`;
-		try {
-			if (folder === '') await renamePackage(pkg, name);
-			else await renameFolder(pkg, folder, newFolder);
-		} catch {
-			return false;
-		}
-		const prev = selected;
-		await refreshTree();
+
 		if (folder !== '') {
+			try {
+				await renameFolder(pkg, folder, newFolder);
+			} catch {
+				return false;
+			}
+			const prev = selected;
+			await refreshTree();
 			const oldKey = `pkg:${pkg}/${folder}`;
 			if (prev === oldKey || prev.startsWith(`${oldKey}/`)) {
 				selected = `pkg:${pkg}/${newFolder}${prev.slice(oldKey.length)}`;
 				void loadPage(selected, false);
 			}
+			return true;
+		}
+
+		// 包改名：撞同名 → 询问并入最老同名包（无他包同名时改名本身无害）
+		let res: RenameResult;
+		let mergedTargetId = '';
+		try {
+			res = await renamePackage(pkg, name);
+		} catch (e) {
+			if (!(e instanceof RenameConflictError)) return false;
+			const target = packages.find((x) => x.id === e.targetId);
+			if (!target) return false; // 树里找不到合并去向（树过期等）：无法确认，按失败保持编辑态
+			const ownerHint = target.uploaderUsername
+				? `（${t('file.owner')}：${target.uploaderUsername}）`
+				: '';
+			if (!window.confirm(t('pkg.confirmMerge', { name: target.name, ownerHint }))) {
+				return true; // 用户放弃合并 = 放弃改名：正常关闭编辑态
+			}
+			try {
+				res = await renamePackage(pkg, name, true);
+				mergedTargetId = res.targetId ?? '';
+			} catch (e2) {
+				if (e2 instanceof Error) {
+					if (e2.message === 'merge_target_invalid') window.alert(t('pkg.mergeTargetInvalid'));
+					else if (e2.message === 'merge_target_gone') window.alert(t('pkg.mergeGone'));
+					// 重试窗口内目标包易主（或上传者非本人且非管理员）：专属文案，不落通用红框
+					else if (e2.message === 'merge_target_forbidden') window.alert(t('pkg.mergeTargetForbidden'));
+				}
+				return false;
+			}
+		}
+		if (res.deduped?.length) kit.removeByFileIds(new Set(res.deduped));
+		await refreshTree();
+		// 合并成功：本包已删，选中落在其子树则迁到目标包对应层级
+		const srcKey = `pkg:${pkg}`;
+		if (
+			mergedTargetId &&
+			(selected === srcKey || selected.startsWith(`${srcKey}/`))
+		) {
+			selected = `pkg:${mergedTargetId}${selected.slice(srcKey.length)}`;
+			void loadPage(selected, false);
 		}
 		return true;
 	}
@@ -265,6 +315,55 @@
 		selDeleting = false;
 		if (files.length === 0) void loadPage(selected, false); // 当前页删空：重载校正
 		void refreshTree(); // 文件夹可能已空 → 树刷新
+	}
+
+	/** 树小类「移动」钮：解析节点 key 得来源（包 + 小类全路径），打开移动对话框 */
+	function moveFolderNode(node: TreeNode): void {
+		const { pkg, folder } = parseNodeKey(node.key);
+		if (!pkg || !folder) return;
+		moveState = { kind: 'folder', pkgId: pkg, folderPath: folder };
+	}
+
+	/**
+	 * 移动对话框提交（分片与后续同步归页面层）：文件模式按 450 分片（服务端单次
+	 * ≤500，与删除所选同款），合并各片被去重丢弃的 id。成功清组装格子引用、
+	 * 同步多选（文件模式清空；小类模式仅剔除被去重死 id）、刷树并把落在被移
+	 * 子树里的选中迁到目标位置；失败提示后返回 false 保持对话框开（数据未变更，不强刷）
+	 */
+	async function doMove(to: { pkgId: string; folderPath: string }): Promise<boolean> {
+		const from = moveState;
+		if (!from) return false;
+		const deduped = new Set<string>();
+		try {
+			if (from.kind === 'files') {
+				const ids = selection.items.map((i) => i.id);
+				for (let i = 0; i < ids.length; i += 450) {
+					const r = await moveFiles(ids.slice(i, i + 450), to.pkgId, to.folderPath);
+					for (const d of r.deduped ?? []) deduped.add(d);
+				}
+			} else {
+				const r = await moveFolder(from.pkgId, from.folderPath, to.pkgId, to.folderPath);
+				for (const d of r.deduped ?? []) deduped.add(d);
+			}
+		} catch {
+			window.alert(t('move.failed'));
+			return false;
+		}
+		kit.removeByFileIds(deduped); // 目标已有同内容文件 → 被去重丢弃的 id 从组装格子清掉
+		const movedSubtree =
+			from.kind === 'folder' ? `pkg:${from.pkgId}/${from.folderPath}` : '';
+		if (from.kind === 'files') selection.clear();
+		// 小类模式：多选不清空（其中可有别处文件），只剔除被去重丢弃的死 id（整值重赋值）
+		else selection.items = selection.items.filter((i) => !deduped.has(i.id));
+		await refreshTree();
+		if (movedSubtree && (selected === movedSubtree || selected.startsWith(`${movedSubtree}/`))) {
+			// 选中落在被移子树：按目标位置平移（保留子树内余部）
+			selected =
+				`pkg:${to.pkgId}${to.folderPath ? `/${to.folderPath}` : ''}` +
+				selected.slice(movedSubtree.length);
+		}
+		void loadPage(selected, false);
+		return true;
 	}
 
 	/**
@@ -350,6 +449,7 @@
 					onselect={select}
 					onsubmit={submitRename}
 					ondelete={deleteNode}
+					onmove={moveFolderNode}
 				/>
 			{/each}
 			{/if}
@@ -406,6 +506,9 @@
 				<span class="selbar-text">{t('sel.bar', { count: selection.size })}</span>
 				<span class="selbar-btns">
 					{#if canDeleteSel}
+						<button class="btn" disabled={selDeleting} onclick={() => (moveState = { kind: 'files' })}>
+							{t('sel.move')}
+						</button>
 						<button
 							class="btn danger"
 							disabled={selDeleting}
@@ -457,6 +560,17 @@
 
 	<!-- 悬浮组装面板（position:fixed，不占文档流）：拖文件表行到格子，按 <行>-<列><序号> 打包 zip -->
 	<KitBuilder />
+
+	<!-- 移动对话框：目标选择壳，接口调用与后续同步在 doMove -->
+	{#if moveState}
+		<MoveDialog
+			mode={moveState}
+			{packages}
+			{me}
+			onclose={() => (moveState = null)}
+			onsubmit={doMove}
+		/>
+	{/if}
 </div>
 
 <style>
