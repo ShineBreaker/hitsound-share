@@ -66,7 +66,14 @@ export async function verifySession(cookieVal: string | undefined, secret: strin
 	} catch {
 		return null;
 	}
-	const given = b64urlDecode(sig);
+	// sig 段畸形（非 base64 字符）时 atob 抛 InvalidCharacterError——凭证值是外部输入
+	//（cookie / x-hs-session 头 / 交换码 body），解码异常不得逃逸成 500，按坏签名返回 null
+	let given: Uint8Array;
+	try {
+		given = b64urlDecode(sig);
+	} catch {
+		return null;
+	}
 	// 定长比较，避免时序侧信道
 	if (given.length !== expected.length) return null;
 	let diff = 0;

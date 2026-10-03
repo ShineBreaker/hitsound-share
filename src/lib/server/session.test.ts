@@ -46,6 +46,15 @@ describe('signSession / verifySession', () => {
 		expect(await verifySession(`${body}x.${sig}`, SECRET)).toBeNull();
 	});
 
+	it('畸形 sig 段（非 base64 字符）→ null，不抛解码异常（畸形值可经 x-hs-session 头到达任意守卫端点）', async () => {
+		// 合法 body + 畸形 sig
+		const value = await signSession(USER, SECRET);
+		const [body] = value.split('.');
+		await expect(verifySession(`${body}.!!!not-base64!!!`, SECRET)).resolves.toBeNull();
+		// 整值即畸形
+		await expect(verifySession('x.!!!', SECRET)).resolves.toBeNull();
+	});
+
 	it('过期（ttl 已过）→ null', async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(1_700_000_000_000);

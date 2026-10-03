@@ -59,6 +59,14 @@ describe('POST /api/auth/exchange', () => {
 		expect(((await res.json()) as { error: string }).error).toBe('bad_code');
 	});
 
+	it('非法字符码（sig 段非 base64）→ 400 bad_code 而非 500（解码异常不得逃逸）', async () => {
+		const code = await signSession(USER, SECRET, EXCHANGE_TTL_S);
+		const [body] = code.split('.');
+		const res = await call({ code: `${body}.!!!not-base64!!!` });
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as { error: string }).error).toBe('bad_code');
+	});
+
 	it('密钥不符的码（异部署）→ 400 bad_code', async () => {
 		const code = await signSession(USER, 'other-secret', EXCHANGE_TTL_S);
 		expect((await call({ code })).status).toBe(400);
