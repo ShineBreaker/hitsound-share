@@ -10,6 +10,7 @@
 - **R2**：音频 blob 内容寻址存储（`blobs/<hash前2>/<sha256>.<ext>`），binding 名 `HITSOUND_FILES`，桶名 `hitsound-files`。上传走浏览器预签名直连、整包下载由浏览器实时拼 zip，服务端只做代理回退。
 - **构建配置在 Pages 项目面板（build_config）**：构建命令 `pnpm build`、输出目录由 `wrangler.toml` 的 `pages_build_output_dir` 承载；Node 版本钉在 `.node-version`（大版本号 22）。wrangler.toml 不承载构建命令。
 - R2/D1 bindings 由 `wrangler.toml` 声明，Pages 构建时自动应用。
+- **部署形态**：默认整包（同源 Web 页面 + API 同域，下述步骤即为该形态）；`just build-static` 抽取纯静态产物可**仅部署前端**到任意静态托管或 Tauri 打包；**「纯 API 域」未单独内置**——整包部署配上 `CORS_ORIGINS` 即充当后端（页面资产共存零成本）。三形态适用场景与步骤详见 [architecture-split.md](./architecture-split.md)「部署形态」一节。
 
 ```mermaid
 flowchart TD
@@ -57,7 +58,7 @@ flowchart TD
 
 1. Pages 环境变量加 `CORS_ORIGINS`（Production，逗号分隔）：跨源 Web 填前端域（如 `https://app.example.com`）；桌面端按目标平台加 `http://tauri.localhost`（Windows WebView2）与 `tauri://localhost`（macOS/Linux WebKitGTK）。保存即生效（每请求解析，无需重新部署代码）。
 2. **R2 桶 CORS 追加同一批 origin**（运维动作，缺一则桌面/跨源直传与直连失败）：AllowedOrigins 加前端域与两个 tauri origin（R2 接受任意 origin 字符串，含自定义协议）；同时核对 AllowedMethods 须含 `PUT`（上传预签名直传）与 `GET`（下载直连）；AllowedHeaders 无需新增（直传链路不带自定义 header，`x-hs-gate` / `x-hs-session` 只发给 API 域）。
-3. 前端侧零配置文件：用户在应用内「连接设置」（顶栏齿轮）填 API 地址，门启用时再输站点密码（桌面首启有引导遮罩，token 落 localStorage）。**登录**（跨源 Web / 桌面同轨）：OAuth 回调 302 回前端域时附 `?hs_code=`（60s 短时效交付码），落地页自动 `POST /api/auth/exchange` 换发会话 token 存 localStorage、此后经 `x-hs-session` 头携带——桌面 WebView 不依赖第三方 cookie；同源 Web 仍纯 cookie 轨，行为不变。
+3. 前端侧零配置文件：用户在应用内「连接设置」（顶栏齿轮按「桌面模式或已配置地址」显示，桌面首启有引导遮罩）填 API 地址，门启用时再输站点密码（跨源/桌面解锁 token 落 localStorage，同源 Web 纯 cookie 轨）。**登录**（跨源 Web / 桌面同轨）：OAuth 回调 302 回前端域时附 `?hs_code=`（60s 短时效交付码），落地页自动 `POST /api/auth/exchange` 换发会话 token 存 localStorage、此后经 `x-hs-session` 头携带——桌面 WebView 不依赖第三方 cookie；同源 Web 仍纯 cookie 轨，行为不变。
 4. 按「六、部署后验证」的跨源验证项核对；桌面实机另过 desktop.md 五节核查清单。
 
 撤销跨源能力 = 删 `CORS_ORIGINS` 变量（立即回到同源现状，无任何 CORS 头；已连接的跨源/桌面前端会失去 API 访问，属预期）。

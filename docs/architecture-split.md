@@ -36,7 +36,7 @@ flowchart LR
 | 形态 | 连接配置 | 门凭证 | 登录/上传 |
 | --- | --- | --- | --- |
 | 同源 Web（现状） | 无（base=''） | `hs_gate` cookie | ✅ cookie（Lax） |
-| 跨源 Web（https） | 齿轮填 API 域 | cookie(None) + token 双轨 | ✅（SameSite=None + credentials include；Safari 不可用，见「六」） |
+| 跨源 Web（https） | 齿轮填 API 域（入口显隐见二节） | cookie(None) + token 双轨 | ✅（SameSite=None + credentials include；Safari 不可用，见「七」） |
 | Tauri 桌面 | 首启引导必填 | token（`x-hs-gate` 头 + `/f/` query）+ 会话 token（`x-hs-session` 头） | ✅ 全功能（登录走 `hs_code` 交换，见 3.3） |
 
 ## 二、API 客户端层（`src/lib/api-base.svelte.ts`）
@@ -50,9 +50,9 @@ flowchart LR
 | `fetchIssuedUrl(url, init)` | 服务端下发 URL（zip 清单 `urls` 值）三支分派：① 相对路径（旧后端形态）→ apiFetch；② 绝对 URL 且 origin === API base（新后端的 `/api/blob` 绝对回退 URL，受门保护）→ 剥 base 走 apiFetch（裸 fetch 会被门 401）；③ 其余绝对 URL（R2 预签名域）→ 裸 fetch |
 | `loginUrl()` | 登录整页导航 URL：base + `/api/auth/login` + query（token 存在时 `hs_gate`、base 非空时 `hs_origin=<location.origin>`）。URLSearchParams 组装——无 token 时手拼 `'&'` 会产出坏 URL |
 | `getApiBase` / `setApiBase` / `clearConnection` / `getGateToken` / `setGateToken` | 连接状态读写；`setApiBase` 规范化（trim、去尾 `/`、必须 http(s)），非法 throw `bad_url` |
-| `isDesktopApp()` / `needsDesktopSetup()` | Tauri WebView 检测（`__TAURI_INTERNALS__` / `__TAURI__` 全局标记，纯检测零网络）；后者 = 桌面且未配 base（首启引导） |
+| `isDesktopApp()` / `needsDesktopSetup()` / `showConnectionEntry()` | Tauri WebView 检测（`__TAURI_INTERNALS__` / `__TAURI__` 全局标记，纯检测零网络）；后者 = 桌面且未配 base（首启引导）；齿轮入口 = 桌面或已配 base（同源网页版隐藏） |
 
-**连接设置 UI**（`src/lib/components/ConnectionSettings.svelte`，顶栏齿轮入口）：字段 = 服务器地址（留空 = 同源当前站点）+ 站点密码（`config.gate.locked` 时亮出）；「测试并保存」= setApiBase → fetchConfig →（locked 则 unlockSite）成功后整页 reload（换源后整树状态重建）；失败回显原因（`bad_url` / 不可达 / `wrong_password`）**并回滚连接改动**，不留半套状态打死地址。齿轮无条件显示——连接配置与上传能力正交，`uploadEnabled=false` 时跨源/桌面用户恰恰最需要它（`src/routes/+layout.svelte` 顶栏 actions 区）。桌面首启：`needsDesktopSetup()` 时显示引导遮罩，点击打开连接设置。
+**连接设置 UI**（`src/lib/components/ConnectionSettings.svelte`，顶栏齿轮入口）：字段 = 服务器地址（留空 = 同源当前站点）+ 站点密码（`config.gate.locked` 时亮出）；「测试并保存」= setApiBase → fetchConfig →（locked 则 unlockSite）成功后整页 reload（换源后整树状态重建）；失败回显原因（`bad_url` / 不可达 / `wrong_password`）**并回滚连接改动**，不留半套状态打死地址。齿轮按「桌面模式或已配置服务器地址」显示（`showConnectionEntry()` = `isDesktopApp() || getApiBase()` 非空，`src/routes/+layout.svelte` 顶栏 actions 区）——同源网页版隐藏（纯 cookie 门轨用不到连接配置），已配置用户保留修改/断开入口；对可见用户，连接配置仍与上传能力正交，`uploadEnabled=false` 时恰恰最需要它。桌面首启：`needsDesktopSetup()` 时显示引导遮罩，点击打开连接设置。
 
 ## 三、鉴权
 
@@ -109,7 +109,30 @@ cookie SameSite 统一口径：`hs_session` / `hs_gate` / `hs_oauth_state` 三�
 - **只能部署在域根路径**：硬约束是 osucad 预览 iframe 的根绝对 src `"/osucad/index.html"`（`CadPreview.svelte`），子路径部署会 404 断 cad 预览；`_app`（`./` 相对）与 wasm（`import.meta.url` 相对）本可子路径工作。解法是改 iframe src 为相对引用（未做）。
 - 本地联调：`just serve-static` 起 :8798（绑定 127.0.0.1 与后端 localhost 形成真实跨站）。
 
-## 六、测试与已知边界
+## 六、部署形态
+
+同一份前端代码 × 同一个后端产物，可组合出三种部署形态；分离能力全部是增量配置，默认形态零改动。
+
+### 整包部署（默认：同源 Web + API 同域）
+
+现状通道：Pages Git 集成推 `main` → `pnpm build` → `.svelte-kit/cloudflare`（预渲染页面 shell + `_worker.js`）整体部署为一个 Pages 项目，浏览器访问同一域同时拿到页面与 API。**这就是同源 Web 形态本身**，无需任何分离配置。
+
+它同时是「仅后端」形态的载体：配上 `CORS_ORIGINS`（+ R2 桶 CORS，见 deployment.md 二节）后，同一部署即可服务任意跨源前端与桌面端——API 域继续伺服同源页面属零成本共存（这也是同源 Web 版继续工作的机制）。**没有单独的纯 API 构建通道**；若将来确需剥离页面资产的纯 API 域，属未内置能力，另行提案。
+
+### 仅部署前端（静态产物）
+
+`just build-static`（= `pnpm build` 后 `node scripts/build-static.mjs` 抽取 + CSP 放宽后处理，等价 `pnpm build:static`）→ `build-static/` 纯静态产物（无 Functions，已排除 `_worker.js` / `_routes.json` / `_headers`），可部署到任意静态托管——Cloudflare Pages 静态项目（构建命令 `just build-static`、输出目录 `build-static`）、nginx、GitHub Pages、对象存储 + CDN 等，或作为 Tauri `frontendDist` 打包桌面端（见 desktop.md）。步骤与前提：
+
+1. **只能部署在域根路径**（osucad 预览 iframe 根绝对 src 的硬约束，见 desktop.md 三节）；
+2. 后端配 `CORS_ORIGINS` 含前端 origin，R2 桶 CORS 追加同一批 origin（deployment.md 二节「跨源 / 桌面端接入」）；
+3. 用户侧连接：连接设置里填 API 服务器地址、门启用时输站点密码。桌面端首启有引导遮罩；跨源 Web 的齿轮入口按「桌面或已配置地址」显示（见二节 `showConnectionEntry`）——**公开跨源 Web 部署的页内首次配置入口（如 URL 参数播种）属未内置能力**，现阶段首次配置走桌面端引导；
+4. 本地联调：`just serve-static`（:8798，绑定 127.0.0.1 与后端 localhost 形成真实跨站）配 `just pages-dev`（:8799）。
+
+### 仅部署后端（API 域）
+
+即「整包部署 + `CORS_ORIGINS`」：如整包一节所述，整包产物本身就是可用的 API 后端，页面资产的存在不构成分离障碍（同源 Web 版因此继续可用），无需单独的构建通道。
+
+## 七、测试与已知边界
 
 - 单测：`src/lib/api-base.test.ts`（URL 构造 / header（含 `x-hs-session`）/ credentials / 三支分派 / loginUrl 形态）、`src/hooks.server.test.ts`（CORS 头、预检、三源凭证、门 401 带头、子请求计数）、auth login/callback/me/exchange、session/guard 双轨、site-gate、config、zip 回退 URL。
 - 冒烟两条互补（均托管后端生命周期 + 数据播种，支持 `--keep-servers`）：
