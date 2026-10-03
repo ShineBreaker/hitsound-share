@@ -9,8 +9,8 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
-	import { fetchConfig, fetchMe, type Me } from '$lib/api';
-	import { apiFetch, loginUrl, isDesktopApp, needsDesktopSetup } from '$lib/api-base.svelte';
+	import { fetchConfig, fetchMe, exchangeAuthCode, type Me } from '$lib/api';
+	import { apiFetch, loginUrl, setSessionToken, needsDesktopSetup } from '$lib/api-base.svelte';
 	import UploadDialog from '$lib/components/UploadDialog.svelte';
 	import MyPackages from '$lib/components/MyPackages.svelte';
 	import AdminPanel from '$lib/components/AdminPanel.svelte';
@@ -31,12 +31,9 @@
 	let showAdmin = $state(false); // 管理员面板（访问密码 + 超管的名单维护）
 	let gateLocked = $state(false); // 站点访问密码门：未解锁时全站遮罩，数据 API 均 401
 	let showConn = $state(false); // 连接设置对话框（齿轮入口；桌面首启引导也会打开）
-	// 桌面（Tauri）检测：预渲染/SSR 环境无 Tauri 标记，初始 false 与之对齐，onMount 后再判定
-	let desktop = $state(false);
 	let desktopSetup = $state(false); // 桌面首启引导遮罩：Tauri 且未配 API base
 
 	onMount(() => {
-		desktop = isDesktopApp();
 		desktopSetup = needsDesktopSetup();
 		// ? 键（Shift+/）打开帮助：不在输入框、无其他模态时生效
 		const onKey = (e: KeyboardEvent) => {
@@ -49,6 +46,16 @@
 		window.addEventListener('keydown', onKey);
 		// 配置与登录态是独立异步流程，不阻塞监听注册
 		void (async () => {
+			// OAuth 交付码落地（登录 code 交付轨，桌面/跨源同用）：换会话 token 后清参数
+			// 防刷新重放；失败静默（保持未登录）。同源登录无 code，此分支不触发
+			const code = new URLSearchParams(location.search).get('hs_code');
+			if (code) {
+				await exchangeAuthCode(code);
+				const params = new URLSearchParams(location.search);
+				params.delete('hs_code');
+				const rest = params.toString();
+				history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : ''));
+			}
 			try {
 				const cfg = await fetchConfig();
 				uploadEnabled = cfg.uploadEnabled;
@@ -56,7 +63,7 @@
 			} catch {
 				// 配置拉取失败按未启用处理
 			}
-			if (gateLocked || !uploadEnabled || desktop) return; // 未解锁时登录态请求也会 401，解锁后整页刷新重载；桌面端无 cookie 会话不查
+			if (gateLocked || !uploadEnabled) return; // 未解锁时登录态请求也会 401，解锁后整页刷新重载
 			const data = await fetchMe();
 			if (data.loggedIn && data.username) me = data;
 		})();
@@ -64,6 +71,9 @@
 	});
 
 	async function logout(): Promise<void> {
+		// 会话 token 轨与 cookie 并存：服务端清 cookie 的同时本地清 token（防换人登录后
+		// 旧 token 仍以 header 轨复活旧会话——桌面端无 cookie，全靠这一清）
+		setSessionToken(null);
 		await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => null);
 		location.reload();
 	}
@@ -86,7 +96,7 @@
 			<span class="tagline">{t('app.tagline')}</span>
 		</div>
 		<div class="actions">
-			{#if uploadEnabled && !desktop}
+			{#if uploadEnabled}
 				{#if me}
 					<button class="user" type="button" onclick={() => (showMy = true)} title={me.username}>
 						{me.username}

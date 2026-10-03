@@ -1,7 +1,9 @@
 // fetchPeaks 批量合并：16ms 窗口内的 id 合并成一次 /api/waveform?ids=… 请求；
-// 失败 resolve null 并把本批 id 逐出缓存（下次可重试）
+// 失败 resolve null 并把本批 id 逐出缓存（下次可重试）；
+// exchangeAuthCode：OAuth 交付码换会话 token（桌面端登录态 header 轨）
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fetchPeaks, buildForest } from './api';
+import { fetchPeaks, buildForest, exchangeAuthCode, fetchMe } from './api';
+import { clearConnection, getSessionToken } from './api-base.svelte';
 
 afterEach(() => {
 	vi.useRealTimers();
@@ -85,5 +87,55 @@ describe('buildForest', () => {
 		expect(a.ownerName).toBe('alice');
 		expect(a.children[0].ownerName).toBe('alice'); // 深层文件夹同样携带
 		expect(sys.ownerName).toBeNull();
+	});
+});
+
+describe('exchangeAuthCode（OAuth 交付码落地）', () => {
+	afterEach(() => {
+		clearConnection(); // api-base 模块级 $state 跨用例共享
+	});
+
+	function lastCall(): { url: string; init: RequestInit } {
+		return calls.at(-1)!;
+	}
+	let calls: Array<{ url: string; init: RequestInit }>;
+
+	it('成功：POST /api/auth/exchange 带 { code }，token 存入会话态并返回 true', async () => {
+		calls = [];
+		vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+			calls.push({ url, init: init ?? {} });
+			return new Response(JSON.stringify({ token: 'sess-7d' }), { status: 200 });
+		});
+		await expect(exchangeAuthCode('short-lived-code')).resolves.toBe(true);
+		const { url, init } = lastCall();
+		expect(url).toBe('/api/auth/exchange');
+		expect(init.method).toBe('POST');
+		expect(JSON.parse(init.body as string)).toEqual({ code: 'short-lived-code' });
+		expect(getSessionToken()).toBe('sess-7d');
+	});
+
+	it('失败（400 bad_code）→ 返回 false 且不落 token', async () => {
+		vi.stubGlobal(
+			'fetch',
+			async () => new Response(JSON.stringify({ error: 'bad_code' }), { status: 400 })
+		);
+		await expect(exchangeAuthCode('expired-code')).resolves.toBe(false);
+		expect(getSessionToken()).toBeNull();
+	});
+
+	it('换发成功后，后续 apiFetch 自动附 x-hs-session（登录态 header 轨闭环）', async () => {
+		calls = [];
+		vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+			calls.push({ url, init: init ?? {} });
+			return new Response(
+				JSON.stringify(url === '/api/auth/exchange' ? { token: 'sess-7d' } : { loggedIn: true }),
+				{ status: 200 }
+			);
+		});
+		await exchangeAuthCode('code-1');
+		calls = [];
+		await fetchMe();
+		expect(calls[0].url).toBe('/api/auth/me');
+		expect(new Headers(calls[0].init.headers).get('x-hs-session')).toBe('sess-7d');
 	});
 });

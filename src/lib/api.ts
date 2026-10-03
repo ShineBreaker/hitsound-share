@@ -2,7 +2,7 @@
 // 含树构建（与后端聚合同口径）。网络出口统一走 api-base 的 apiFetch（可配 API base + 门 token）
 import type { FileRow, TreeNode, ZipManifest } from '$lib/types';
 import type { KitFile } from '$lib/kit.svelte';
-import { apiFetch, setGateToken } from '$lib/api-base.svelte';
+import { apiFetch, setGateToken, setSessionToken } from '$lib/api-base.svelte';
 
 export interface TreePackage {
 	id: string;
@@ -87,6 +87,23 @@ export async function fetchMe(): Promise<Me> {
 		return await getJSON('/api/auth/me');
 	} catch {
 		return { loggedIn: false };
+	}
+}
+
+/**
+ * OAuth 交付码落地：callback 跨源 302 附带的 ?hs_code=（60s 短时效签名值）换发
+ * 完整会话 token 存 localStorage（桌面 WebView 第三方 cookie 不可靠，登录态此后走
+ * x-hs-session 头）。调用方负责清 URL 参数与静默失败（失败保持未登录态）。
+ * 返回是否换发成功
+ */
+export async function exchangeAuthCode(code: string): Promise<boolean> {
+	try {
+		const res = await mutateJSON<{ token?: string }>('/api/auth/exchange', 'POST', { code });
+		if (typeof res.token !== 'string' || res.token === '') return false;
+		setSessionToken(res.token);
+		return true;
+	} catch {
+		return false;
 	}
 }
 

@@ -2,9 +2,12 @@
 // base = '' 即同源（Web 版现状：相对路径 + same-origin cookie，行为零回归）；
 // base 非空 = 跨源消费（独立域静态部署 / Tauri 桌面）：相对路径拼 base、
 // 带 x-hs-gate 门凭证（token，POST /api/site-gate 响应下发）、cookie credentials include。
+// 登录态双轨：x-hs-session 头（token，?hs_code= 交换下发，键 hs_session_token）——
+// 桌面 WebView 第三方 cookie 不可靠，与 gate token 并存互不干扰。
 // 依赖方向硬约束：本模块不 import 任何业务模块（api.ts 反向依赖它），避免环。
 export const API_BASE_KEY = 'hs_api_base';
 export const GATE_TOKEN_KEY = 'hs_gate_token';
+export const SESSION_TOKEN_KEY = 'hs_session_token';
 
 /** localStorage 读取；测试环境（node 无 localStorage）按空处理 */
 function readStored(key: string): string {
@@ -30,6 +33,7 @@ function writeStored(key: string, value: string | null): void {
 // $state 整值赋值（代理坑：禁止局部写）；组件消费一律走导出函数
 let apiBase = $state(readStored(API_BASE_KEY));
 let gateToken = $state<string | null>(readStored(GATE_TOKEN_KEY) || null);
+let sessionToken = $state<string | null>(readStored(SESSION_TOKEN_KEY) || null);
 
 /** 当前 API base；'' = 同源（默认，Web 版现状） */
 export function getApiBase(): string {
@@ -44,12 +48,14 @@ export function setApiBase(raw: string): void {
 	writeStored(API_BASE_KEY, normalized);
 }
 
-/** 清空 base 与 token（断开连接） */
+/** 清空 base 与双 token（断开连接；会话 token 属于该连接，一并作废） */
 export function clearConnection(): void {
 	apiBase = '';
 	gateToken = null;
+	sessionToken = null;
 	writeStored(API_BASE_KEY, null);
 	writeStored(GATE_TOKEN_KEY, null);
+	writeStored(SESSION_TOKEN_KEY, null);
 }
 
 /** 门解锁 token（POST /api/site-gate 响应下发）；无则 null */
@@ -60,6 +66,17 @@ export function getGateToken(): string | null {
 export function setGateToken(t: string | null): void {
 	gateToken = t;
 	writeStored(GATE_TOKEN_KEY, t);
+}
+
+/** 登录态 token（?hs_code= 经 POST /api/auth/exchange 换发的会话签名值）；
+ *  与 cookie 值同构，服务端经 x-hs-session 头读取（cookie 优先）。无则 null */
+export function getSessionToken(): string | null {
+	return sessionToken;
+}
+
+export function setSessionToken(t: string | null): void {
+	sessionToken = t;
+	writeStored(SESSION_TOKEN_KEY, t);
 }
 
 /** Tauri WebView 检测（纯检测，不做任何网络请求） */
@@ -75,9 +92,10 @@ export function needsDesktopSetup(): boolean {
 /**
  * 统一 fetch 出口。语义按输入分派：
  *  - 绝对 http(s) URL（R2 预签名 PUT/GET）→ 原样 fetch，不加 header、不加 credentials
- *    （预签名 URL 只签了既定 headers，附加 x-hs-gate 会导致签名失配 + 预检失败）；
+ *    （预签名 URL 只签了既定 headers，附加自定义头会导致签名失配 + 预检失败）；
  *  - 相对路径（/api/*、/f/*）→ getApiBase() 拼接（base 空则原样）；
- *    有 gate token 时注入 header 'x-hs-gate'；credentials = base ? 'include' : 'same-origin'
+ *    有 gate token 时注入 'x-hs-gate'、有会话 token 时注入 'x-hs-session'（并存）；
+ *    credentials = base ? 'include' : 'same-origin'
  *    （base 空时 'same-origin' 与 fetch 默认一致，同源行为零变化）。
  * init 透传（含 cache:'reload' 等既有语义）。
  */
@@ -86,10 +104,12 @@ export async function apiFetch(input: string, init?: RequestInit): Promise<Respo
 	const base = getApiBase();
 	const url = base + input;
 	const credentials: RequestCredentials = base ? 'include' : 'same-origin';
-	const token = getGateToken();
-	if (token) {
+	const gate = getGateToken();
+	const session = getSessionToken();
+	if (gate || session) {
 		const headers = new Headers(init?.headers);
-		headers.set('x-hs-gate', token);
+		if (gate) headers.set('x-hs-gate', gate);
+		if (session) headers.set('x-hs-session', session);
 		return fetch(url, { ...init, headers, credentials });
 	}
 	return fetch(url, { ...init, credentials });

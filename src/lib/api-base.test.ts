@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	API_BASE_KEY,
 	GATE_TOKEN_KEY,
+	SESSION_TOKEN_KEY,
 	apiFetch,
 	absoluteApiUrl,
 	fetchIssuedUrl,
@@ -11,7 +12,9 @@ import {
 	needsDesktopSetup,
 	setApiBase,
 	clearConnection,
-	setGateToken
+	setGateToken,
+	setSessionToken,
+	getSessionToken
 } from './api-base.svelte';
 
 let calls: Array<{ input: unknown; init?: RequestInit }>;
@@ -70,6 +73,34 @@ describe('apiFetch', () => {
 		});
 		expect(calls[0].input).toBe('https://bucket.r2.cloudflarestorage.com/blobs/ab/h.wav?X-Sig=1');
 		expect(calls[0].init).toEqual({ method: 'PUT', body: 'x' }); // init 原样透传
+	});
+});
+
+describe('apiFetch 会话 token 轨（x-hs-session）', () => {
+	it('仅会话 token → 注入 x-hs-session，不带 x-hs-gate', async () => {
+		setApiBase('https://api.example.com');
+		setSessionToken('sess-1');
+		await apiFetch('/api/auth/me');
+		const headers = new Headers(calls[0].init?.headers);
+		expect(headers.get('x-hs-session')).toBe('sess-1');
+		expect(headers.get('x-hs-gate')).toBeNull();
+		expect(calls[0].init?.credentials).toBe('include');
+	});
+
+	it('双 token 并存 → 两 header 同发（门凭证与登录态互不干扰）', async () => {
+		setApiBase('https://api.example.com');
+		setGateToken('tok-1');
+		setSessionToken('sess-1');
+		await apiFetch('/api/tree', { cache: 'reload' });
+		const headers = new Headers(calls[0].init?.headers);
+		expect(headers.get('x-hs-gate')).toBe('tok-1');
+		expect(headers.get('x-hs-session')).toBe('sess-1');
+		expect(calls[0].init?.cache).toBe('reload');
+	});
+
+	it('无任何 token → 无自定义 header（同源现状零回归）', async () => {
+		await apiFetch('/api/tree');
+		expect(calls[0].init?.headers).toBeUndefined();
 	});
 });
 
@@ -172,7 +203,7 @@ describe('needsDesktopSetup（桌面首启引导遮罩判定）', () => {
 });
 
 describe('localStorage 持久化（连接设置的保存路径）', () => {
-	it('setApiBase/setGateToken 写入两键，clearConnection 双清', () => {
+	it('setApiBase/setGateToken/setSessionToken 写入三键，clearConnection 三清', () => {
 		const store = new Map<string, string>();
 		vi.stubGlobal('localStorage', {
 			getItem: (k: string) => store.get(k) ?? null,
@@ -181,10 +212,31 @@ describe('localStorage 持久化（连接设置的保存路径）', () => {
 		});
 		setApiBase('https://api.example.com');
 		setGateToken('tok-1');
+		setSessionToken('sess-1');
 		expect(store.get(API_BASE_KEY)).toBe('https://api.example.com');
 		expect(store.get(GATE_TOKEN_KEY)).toBe('tok-1');
+		expect(store.get(SESSION_TOKEN_KEY)).toBe('sess-1');
 		clearConnection();
 		expect(store.has(API_BASE_KEY)).toBe(false);
 		expect(store.has(GATE_TOKEN_KEY)).toBe(false);
+		expect(store.has(SESSION_TOKEN_KEY)).toBe(false);
+		expect(getSessionToken()).toBeNull();
+	});
+
+	it('setSessionToken(null) 单独清除（logout 路径），不影响 base 与门 token', () => {
+		const store = new Map<string, string>();
+		vi.stubGlobal('localStorage', {
+			getItem: (k: string) => store.get(k) ?? null,
+			setItem: (k: string, v: string) => void store.set(k, v),
+			removeItem: (k: string) => void store.delete(k)
+		});
+		setApiBase('https://api.example.com');
+		setGateToken('tok-1');
+		setSessionToken('sess-1');
+		setSessionToken(null);
+		expect(getSessionToken()).toBeNull();
+		expect(store.has(SESSION_TOKEN_KEY)).toBe(false);
+		expect(store.get(API_BASE_KEY)).toBe('https://api.example.com');
+		expect(store.get(GATE_TOKEN_KEY)).toBe('tok-1');
 	});
 });
