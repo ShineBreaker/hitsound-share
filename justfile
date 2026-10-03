@@ -33,6 +33,11 @@ build-static: build
 serve-static:
     cd build-static && python3 -m http.server 8798 --bind 127.0.0.1
 
+# 跨源端到端冒烟：托管后端(:8799) + 数据播种 + 静态前端(:8798) + CDP 断言
+# 可透传参数：just smoke-cross-origin --keep-servers（跑完保留服务与状态目录供调试）
+smoke-cross-origin *ARGS: build build-static
+    node scripts/smoke-cross-origin.mjs {{ ARGS }}
+
 # 提交前门禁：单测 + 构建全绿
 verify: test build
 
