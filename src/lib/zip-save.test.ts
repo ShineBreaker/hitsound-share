@@ -1,7 +1,8 @@
-// packZip：unzipSync 校验产物（名字/字节正确）、同 key 只 load 一次、并发上限、错误传播
-import { describe, it, expect } from 'vitest';
+// packZip：unzipSync 校验产物（名字/字节正确）、同 key 只 load 一次、并发上限、错误传播；
+// saveZip：桌面（Tauri）模式跳过 picker 走内存 Blob 兜底、非桌面仍走 FS Access 流式写
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { unzipSync } from 'fflate';
-import { packZip } from './zip-save';
+import { packZip, saveZip } from './zip-save';
 
 function collect(): { chunks: Uint8Array[]; write: (c: Uint8Array) => void } {
 	const chunks: Uint8Array[] = [];
@@ -121,5 +122,70 @@ describe('packZip', () => {
 		});
 		expect(seen).toHaveLength(2);
 		expect(seen[1]).toEqual([2, 2]);
+	});
+});
+
+describe('saveZip', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('桌面模式跳过 picker，走内存 Blob + a.download 兜底', async () => {
+		// picker 存在但永不 resolve（Tauri WebView 已知坑）：被调用则本用例超时失败
+		let pickerCalls = 0;
+		vi.stubGlobal('window', {
+			showSaveFilePicker: () => {
+				pickerCalls++;
+				return new Promise(() => {});
+			}
+		});
+		vi.stubGlobal('__TAURI_INTERNALS__', {});
+		const clicks: string[] = [];
+		const anchor = {
+			href: '',
+			download: '',
+			click: () => void clicks.push(anchor.download)
+		};
+		vi.stubGlobal('document', { createElement: () => anchor });
+		vi.stubGlobal('URL', {
+			createObjectURL: () => 'blob:test',
+			revokeObjectURL: () => {}
+		});
+
+		const r = await saveZip('pkg', {
+			entries: [{ path: 'a.wav', key: 'k' }],
+			load: async () => new Uint8Array([1, 2])
+		});
+		expect(r).toBe('saved');
+		expect(pickerCalls).toBe(0); // 关键断言：桌面检测短路 FS Access 路径
+		expect(clicks).toEqual(['pkg.zip']);
+		// 等待兜底路径 revoke 定时器触发完（避免 unstub 后回调打到 node 原生 URL）
+		await new Promise((res) => setTimeout(res, 5));
+	});
+
+	it('非桌面模式仍走 FS Access picker（现状不回归）', async () => {
+		let pickerCalls = 0;
+		const writes: Uint8Array[] = [];
+		vi.stubGlobal('window', {
+			showSaveFilePicker: async () => {
+				pickerCalls++;
+				return {
+					createWritable: async () => ({
+						write: (c: Uint8Array) => void writes.push(c),
+						close: async () => {},
+						abort: async () => {}
+					})
+				};
+			}
+		});
+
+		const r = await saveZip('pkg', {
+			entries: [{ path: 'a.wav', key: 'k' }],
+			load: async () => new Uint8Array([3])
+		});
+		expect(r).toBe('saved');
+		expect(pickerCalls).toBe(1);
+		// 单条目：本地头 + 数据 + 中央目录/EOCD 尾 = 3 段流式写
+		expect(writes.length).toBe(3);
 	});
 });

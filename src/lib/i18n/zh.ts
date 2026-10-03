@@ -205,6 +205,20 @@ const zh = {
 	'admin.gate.bad': '密码需 4-100 个字符，且不能全为空白',
 	'admin.gate.hint': '访客需输入此密码才能进入站点；修改后已解锁的会话将全部失效（你会自动保持解锁）。',
 
+	// 连接设置（跨源静态部署 / Tauri 桌面：服务器地址 + 站点密码）
+	'conn.title': '连接设置',
+	'conn.serverUrl': '服务器地址',
+	'conn.serverUrlHint': '留空 = 使用当前站点',
+	'conn.sitePassword': '站点密码',
+	'conn.testAndSave': '测试并保存',
+	'conn.disconnect': '断开连接',
+	'conn.badUrl': '地址无效：需以 http:// 或 https:// 开头',
+	'conn.unreachable': '无法连接到该服务器（请检查地址与网络，或服务端未放行本站来源）',
+	'conn.wrongPassword': '站点密码错误',
+	'conn.saved': '已保存，正在刷新…',
+	'conn.desktopHint': '桌面版不内置后端，连接站点服务器后即可浏览与下载（如 https://hitsound-share.pages.dev）',
+	'conn.desktopRequired': '请先配置服务器地址',
+
 	// 站点访问密码门（全站遮罩）
 	'gate.title': '本站已上锁',
 	'gate.hint': '输入访问密码进入站点',

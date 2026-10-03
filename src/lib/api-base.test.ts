@@ -2,10 +2,13 @@
 // 状态复位：afterEach clearConnection（模块级 $state 跨用例共享）
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+	API_BASE_KEY,
+	GATE_TOKEN_KEY,
 	apiFetch,
 	absoluteApiUrl,
 	fetchIssuedUrl,
 	loginUrl,
+	needsDesktopSetup,
 	setApiBase,
 	clearConnection,
 	setGateToken
@@ -143,5 +146,45 @@ describe('loginUrl', () => {
 		const q = new URLSearchParams(loginUrl().split('?')[1]);
 		expect(q.get('hs_gate')).toBe('tok-1');
 		expect(q.get('hs_origin')).toBe('http://127.0.0.1:8798');
+	});
+});
+
+describe('needsDesktopSetup（桌面首启引导遮罩判定）', () => {
+	it('非 Tauri 环境 → false（base 空也不引导，Web 版零行为差异）', () => {
+		expect(needsDesktopSetup()).toBe(false);
+	});
+
+	it('__TAURI_INTERNALS__ 存在 + base 空 → true（首启引导）', () => {
+		vi.stubGlobal('__TAURI_INTERNALS__', {});
+		expect(needsDesktopSetup()).toBe(true);
+	});
+
+	it('__TAURI__ 存在同样生效', () => {
+		vi.stubGlobal('__TAURI__', {});
+		expect(needsDesktopSetup()).toBe(true);
+	});
+
+	it('Tauri 环境 + base 已配置 → false（已连接不再引导）', () => {
+		vi.stubGlobal('__TAURI_INTERNALS__', {});
+		setApiBase('https://api.example.com');
+		expect(needsDesktopSetup()).toBe(false);
+	});
+});
+
+describe('localStorage 持久化（连接设置的保存路径）', () => {
+	it('setApiBase/setGateToken 写入两键，clearConnection 双清', () => {
+		const store = new Map<string, string>();
+		vi.stubGlobal('localStorage', {
+			getItem: (k: string) => store.get(k) ?? null,
+			setItem: (k: string, v: string) => void store.set(k, v),
+			removeItem: (k: string) => void store.delete(k)
+		});
+		setApiBase('https://api.example.com');
+		setGateToken('tok-1');
+		expect(store.get(API_BASE_KEY)).toBe('https://api.example.com');
+		expect(store.get(GATE_TOKEN_KEY)).toBe('tok-1');
+		clearConnection();
+		expect(store.has(API_BASE_KEY)).toBe(false);
+		expect(store.has(GATE_TOKEN_KEY)).toBe(false);
 	});
 });

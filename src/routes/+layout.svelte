@@ -10,11 +10,12 @@
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
 	import { fetchConfig, fetchMe, type Me } from '$lib/api';
-	import { apiFetch, loginUrl } from '$lib/api-base.svelte';
+	import { apiFetch, loginUrl, isDesktopApp, needsDesktopSetup } from '$lib/api-base.svelte';
 	import UploadDialog from '$lib/components/UploadDialog.svelte';
 	import MyPackages from '$lib/components/MyPackages.svelte';
 	import AdminPanel from '$lib/components/AdminPanel.svelte';
 	import SiteGate from '$lib/components/SiteGate.svelte';
+	import ConnectionSettings from '$lib/components/ConnectionSettings.svelte';
 	import HelpDialog from '$lib/components/HelpDialog.svelte';
 	import Tour from '$lib/components/Tour.svelte';
 	import { ui } from '$lib/ui.svelte';
@@ -29,8 +30,14 @@
 	let showMy = $state(false);
 	let showAdmin = $state(false); // 管理员面板（访问密码 + 超管的名单维护）
 	let gateLocked = $state(false); // 站点访问密码门：未解锁时全站遮罩，数据 API 均 401
+	let showConn = $state(false); // 连接设置对话框（齿轮入口；桌面首启引导也会打开）
+	// 桌面（Tauri）检测：预渲染/SSR 环境无 Tauri 标记，初始 false 与之对齐，onMount 后再判定
+	let desktop = $state(false);
+	let desktopSetup = $state(false); // 桌面首启引导遮罩：Tauri 且未配 API base
 
 	onMount(() => {
+		desktop = isDesktopApp();
+		desktopSetup = needsDesktopSetup();
 		// ? 键（Shift+/）打开帮助：不在输入框、无其他模态时生效
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key !== '?' || e.ctrlKey || e.altKey || e.metaKey) return;
@@ -49,7 +56,7 @@
 			} catch {
 				// 配置拉取失败按未启用处理
 			}
-			if (gateLocked || !uploadEnabled) return; // 未解锁时登录态请求也会 401，解锁后整页刷新重载
+			if (gateLocked || !uploadEnabled || desktop) return; // 未解锁时登录态请求也会 401，解锁后整页刷新重载；桌面端无 cookie 会话不查
 			const data = await fetchMe();
 			if (data.loggedIn && data.username) me = data;
 		})();
@@ -79,7 +86,7 @@
 			<span class="tagline">{t('app.tagline')}</span>
 		</div>
 		<div class="actions">
-			{#if uploadEnabled}
+			{#if uploadEnabled && !desktop}
 				{#if me}
 					<button class="user" type="button" onclick={() => (showMy = true)} title={me.username}>
 						{me.username}
@@ -104,6 +111,31 @@
 					{t('app.upload')}
 				</button>
 			{/if}
+			<!-- 连接设置入口无条件显示（连接配置与上传能力正交：后端未配齐上传变量时，
+			     跨源 Web / 桌面用户恰恰最需要配置服务器地址） -->
+			<button
+				class="help-btn gear-btn"
+				type="button"
+				title={t('conn.title')}
+				aria-label={t('conn.title')}
+				onclick={() => (showConn = true)}
+			>
+				<!-- 齿轮图标：lucide settings（ISC） -->
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<path
+						d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+					/>
+					<circle cx="12" cy="12" r="3" />
+				</svg>
+			</button>
 			<!-- 帮助入口始终显示（上传未启用时也不例外） -->
 			<button
 				class="help-btn"
@@ -166,11 +198,29 @@
 {#if ui.helpOpen}
 	<HelpDialog {uploadEnabled} onclose={() => (ui.helpOpen = false)} />
 {/if}
+{#if showConn}
+	<ConnectionSettings onclose={() => (showConn = false)} {gateLocked} />
+{/if}
 <Tour />
 
 <!-- 站点访问密码门：盖住整站（含所有对话框），解锁成功后整页刷新重载数据 -->
 {#if gateLocked}
 	<SiteGate onunlock={() => location.reload()} />
+{/if}
+
+<!-- 桌面首启引导：Tauri 环境且未配服务器地址（自定义协议源下没有同源后端可打）。
+     打开连接设置时暂时让位（z 同为 200，对话框要可操作）；保存成功后整页刷新，遮罩不再回来 -->
+{#if desktopSetup && !showConn}
+	<div class="gate-mask" role="dialog" aria-modal="true" aria-label={t('conn.desktopRequired')}>
+		<div class="gate-card">
+			<span class="logo" aria-hidden="true"></span>
+			<h1>{t('conn.desktopRequired')}</h1>
+			<p class="hint">{t('conn.desktopHint')}</p>
+			<button class="btn primary" type="button" onclick={() => (showConn = true)}>
+				{t('conn.title')}
+			</button>
+		</div>
+	</div>
 {/if}
 
 <style>
@@ -315,6 +365,55 @@
 	.help-btn:hover {
 		color: var(--accent-bright);
 		border-color: var(--accent);
+	}
+
+	/* 齿轮钮复用帮助圆钮基形，图标居中缩放 */
+	.gear-btn svg {
+		width: 15px;
+		height: 15px;
+	}
+
+	/* 桌面首启引导遮罩：SiteGate 的视觉模式（同 z 层 200，卡片居中 + 模糊底） */
+	.gate-mask {
+		position: fixed;
+		inset: 0;
+		z-index: 200;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: color-mix(in srgb, var(--bg-l1) 92%, transparent);
+		backdrop-filter: blur(6px);
+	}
+
+	.gate-card {
+		width: min(360px, calc(100vw - 40px));
+		padding: 32px 28px;
+		text-align: center;
+		background: var(--bg-l2);
+		border: 1px solid var(--bg-l3);
+		border-radius: var(--radius-lg);
+		box-shadow: 0 12px 40px rgb(0 0 0 / 0.4);
+	}
+
+	.gate-card .logo {
+		display: inline-block;
+		width: 34px;
+		height: 34px;
+		border: 5px solid var(--accent);
+		border-radius: 50%;
+		background: radial-gradient(circle at center, var(--accent-pink) 0 4px, transparent 4px);
+	}
+
+	.gate-card h1 {
+		margin: 14px 0 6px;
+		font-size: 18px;
+		color: var(--text);
+	}
+
+	.gate-card .hint {
+		margin: 0 0 18px;
+		color: var(--text-faint);
+		font-size: 13px;
 	}
 
 	/* ============ 窄屏：藏标语、收紧顶栏 ============ */

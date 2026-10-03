@@ -67,6 +67,11 @@ export function isDesktopApp(): boolean {
 	return '__TAURI_INTERNALS__' in globalThis || '__TAURI__' in globalThis;
 }
 
+/** 桌面首启引导：Tauri 环境且尚未配置 API base（自定义协议源下没有同源后端，必须先走连接设置） */
+export function needsDesktopSetup(): boolean {
+	return isDesktopApp() && !getApiBase();
+}
+
 /**
  * 统一 fetch 出口。语义按输入分派：
  *  - 绝对 http(s) URL（R2 预签名 PUT/GET）→ 原样 fetch，不加 header、不加 credentials

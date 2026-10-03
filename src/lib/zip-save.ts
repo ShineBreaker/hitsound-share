@@ -3,8 +3,10 @@
 // 输出经 write 回调零拷贝直发；CRC32 按内容字节 WeakMap 缓存——谱面集热更新
 // 重建时未变的谱面集条目不重复算 CRC（S1：整包 CRC 主线程卡顿的根因）。
 // 落盘策略：Chromium 走 File System Access 流式写（内存不随包体线性增长）；
-// 其余浏览器降级内存 Blob + <a download>。
+// 其余浏览器降级内存 Blob + <a download>。Tauri WebView 下 showSaveFilePicker 可能
+// 「存在但永不 resolve」，现状仅抛异常才降级会永久 pending——桌面端跳过 picker 直接兜底。
 import { mapPool, yieldMain } from './pool';
+import { isDesktopApp } from './api-base.svelte';
 export interface ZipEntry {
 	path: string; // zip 内相对路径
 	key: string; // 拉取去重键（blob hash 或 files.id）
@@ -219,7 +221,8 @@ const picker = (): ((o: SaveFilePickerOptions) => Promise<FsFileHandle>) | undef
 
 /**
  * 打包并保存为 <name>.<ext>：File System Access 可用时流式写盘（用户取消 → 'cancelled'，
- * 其他异常回退内存 Blob）；任何失败若有 writable 先 abort 再抛出。
+ * 其他异常回退内存 Blob）；桌面端（Tauri）跳过 picker 直接走内存 Blob + a.download 兜底
+ * （picker 存在但永不 resolve 的永久 pending 只有跳过才能防住）；任何失败若有 writable 先 abort 再抛出。
  */
 export async function saveZip(
 	name: string,
@@ -227,7 +230,7 @@ export async function saveZip(
 ): Promise<SaveZipResult> {
 	const { ext = 'zip', ...pack } = opts;
 	const suggested = `${name || 'package'}.${ext}`;
-	if (typeof window !== 'undefined' && typeof picker() === 'function') {
+	if (typeof window !== 'undefined' && !isDesktopApp() && typeof picker() === 'function') {
 		let handle: FsFileHandle | null = null;
 		try {
 			handle = await picker()!({
