@@ -1,8 +1,10 @@
 // /api/auth/callback：授权码换 token → GET api/v2/me → users upsert → 签 HMAC cookie。
-// 服务端出网仅 https://osu.ppy.sh（osuFetch 白名单）；token 用完即弃不落日志
+// 服务端出网仅 https://osu.ppy.sh（osuFetch 白名单）；token 用完即弃不落日志。
+// state 含白名单 origin 尾段（login 编入）时，会话签 SameSite=None 并 302 回前端域
 import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSecrets } from '$lib/server/env';
+import { parseCorsOrigins } from '$lib/server/cors';
 import { getEnv } from '$lib/server/media';
 import { osuFetch } from '$lib/server/osu';
 import { SESSION_COOKIE, SESSION_MAX_AGE_S, signSession } from '$lib/server/session';
@@ -15,6 +17,25 @@ interface OsuMe {
 	id?: number;
 	username?: string;
 	avatar_url?: string | null;
+}
+
+const td = new TextDecoder();
+
+/** state 尾段解出前端 origin（小写规范化）；无尾段 / 坏 b64url / 非白名单一律 null
+ *  （按无尾段处理，走同源现状分支——攻击者伪造尾段拿不到 None 会话与外域跳转） */
+function frontOriginFromState(state: string, origins: Set<string>): string | null {
+	const dot = state.indexOf('.');
+	if (dot === -1) return null;
+	try {
+		const b64 = state.slice(dot + 1).replace(/-/g, '+').replace(/_/g, '/');
+		const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+		const origin = td
+			.decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)))
+			.toLowerCase();
+		return origins.has(origin) ? origin : null;
+	} catch {
+		return null;
+	}
 }
 
 export const GET: RequestHandler = async ({ url, platform, cookies }) => {
@@ -34,6 +55,7 @@ export const GET: RequestHandler = async ({ url, platform, cookies }) => {
 	}
 
 	const redirectUri = secrets.OSU_REDIRECT_URI ?? new URL('/api/auth/callback', url.origin).href;
+	let redirectTarget = '/'; // 同源现状：302 落 API 域根
 
 	try {
 		// 1. 授权码换 access token
@@ -71,7 +93,9 @@ export const GET: RequestHandler = async ({ url, platform, cookies }) => {
 			.bind(me.id, me.username, me.avatar_url ?? null)
 			.run();
 
-		// 4. 签发 session cookie（HttpOnly，前端拿不到内容）
+		// 4. 签发 session cookie（HttpOnly，前端拿不到内容）；
+		//    白名单前端来源（state 尾段，login 编入）→ SameSite=None 供跨源 fetch 携带
+		const frontOrigin = frontOriginFromState(state, parseCorsOrigins(secrets.CORS_ORIGINS));
 		const value = await signSession(
 			{ osuId: me.id, username: me.username, avatarUrl: me.avatar_url ?? null },
 			secrets.SESSION_SECRET
@@ -80,12 +104,14 @@ export const GET: RequestHandler = async ({ url, platform, cookies }) => {
 			path: '/',
 			httpOnly: true,
 			secure: true,
-			sameSite: 'lax',
+			sameSite: frontOrigin ? 'none' : 'lax',
 			maxAge: SESSION_MAX_AGE_S
 		});
+
+		redirectTarget = frontOrigin ? `${frontOrigin}/` : '/';
 	} catch {
 		return new Response('OAuth callback failed', { status: 502 });
 	}
 
-	redirect(302, '/');
+	redirect(302, redirectTarget);
 };
