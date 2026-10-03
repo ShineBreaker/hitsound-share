@@ -4,6 +4,8 @@
 // - 密码只以 sha256(SALT + 密码) 形态出现，明文不进代码/库；校验用请求提交值现算比对；
 // - 解锁凭据 = cookie `hs_gate`，值为以「当前密码 hash」为密钥的 HMAC 签名
 //   → 管理员改密码即作废全部已解锁会话，且不依赖 SESSION_SECRET；
+//   跨源 Web / 桌面端（无 cookie 保障）用同构 token 经 `x-hs-gate` 头或 `?hs_gate=` query
+//   携带（pickGateCredential 三源择一，cookie 优先——同源行为与纯 cookie 时代逐字节一致）；
 // - 验证 = 1 条 settings 主键 SELECT + 1 次 HMAC（子请求预算每请求 +1）；
 //   表未建/查询失败按无记录处理（退回环境变量或未启用），部署先发代码后建表也不会 500
 import type { D1Database } from '@cloudflare/workers-types';
@@ -122,7 +124,17 @@ export async function verifyUnlockValue(
 	}
 }
 
-/** 组合判定：门未启用 → true（放行）；启用则验证 cookie 对当前密码是否有效 */
+/** 三源凭证择一：cookie ?? x-hs-gate 头 ?? ?hs_gate= query（cookie 优先）。
+ *  纯函数零查询；返回值与 cookie 值同构，直接交给 verifyUnlockValue 验签 */
+export function pickGateCredential(
+	cookieValue: string | undefined,
+	headerValue: string | null,
+	queryValue: string | null
+): string | undefined {
+	return cookieValue ?? headerValue ?? queryValue ?? undefined;
+}
+
+/** 组合判定：门未启用 → true（放行）；启用则验证凭证（三源择一后）对当前密码是否有效 */
 export async function isSiteUnlocked(
 	db: D1Database,
 	cookieValue: string | undefined,

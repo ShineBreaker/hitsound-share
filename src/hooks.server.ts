@@ -8,7 +8,7 @@ import { json } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit';
 import { getEnv } from '$lib/server/media';
 import { getSecrets } from '$lib/server/env';
-import { GATE_COOKIE, isSiteUnlocked } from '$lib/server/site-gate';
+import { GATE_COOKIE, isSiteUnlocked, pickGateCredential } from '$lib/server/site-gate';
 import {
 	isAllowedOrigin,
 	parseCorsOrigins,
@@ -38,7 +38,13 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const env = getEnv(event.platform);
 	if (!env) return finish(await resolve(event)); // 无 bindings（构建期/未部署）：交由各端点自行 503
 	const { SITE_DEFAULT_PASSWORD } = getSecrets(event.platform);
-	if (!(await isSiteUnlocked(env.DB, event.cookies.get(GATE_COOKIE), SITE_DEFAULT_PASSWORD))) {
+	// 三源凭证（cookie 优先；header/query 供跨源 Web / 桌面 token 轨），不加子请求
+	const credential = pickGateCredential(
+		event.cookies.get(GATE_COOKIE),
+		event.request.headers.get('x-hs-gate'),
+		event.url.searchParams.get('hs_gate')
+	);
+	if (!(await isSiteUnlocked(env.DB, credential, SITE_DEFAULT_PASSWORD))) {
 		// 门拒绝同样注入 CORS 头：跨源 fetch 收 401 时错误码可读，而非被浏览器吞成 TypeError
 		return finish(json({ error: 'site_locked' }, { status: 401 }));
 	}

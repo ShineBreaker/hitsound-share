@@ -1,5 +1,6 @@
 // hooks.server 统一拦截：门启用且未解锁 → 401 site_locked；白名单、非 API 路径、门未启用放行；
-// CORS_ORIGINS 白名单命中 → OPTIONS 预检 204 / 响应（含门 401 拒绝）注入 Access-Control-* 头
+// CORS_ORIGINS 白名单命中 → OPTIONS 预检 204 / 响应（含门 401 拒绝）注入 Access-Control-* 头；
+// 门凭证三源择一（cookie ?? x-hs-gate 头 ?? ?hs_gate= query，cookie 优先）
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTestD1, type TestD1 } from './test/d1-sqlite';
 import { createMemoryR2, type MemoryR2 } from './test/r2-memory';
@@ -25,6 +26,8 @@ beforeEach(() => {
 
 interface CallOpts {
 	cookie?: string;
+	/** x-hs-gate 头（跨源 Web / 桌面 token 轨） */
+	gateHeader?: string;
 	/** 模拟环境变量 SITE_DEFAULT_PASSWORD；undefined = 未配置（门未启用） */
 	defaultPw?: string;
 	/** 模拟环境变量 CORS_ORIGINS（逗号分隔 origin 白名单）；undefined = 未配置（不启用 CORS） */
@@ -38,12 +41,15 @@ interface CallOpts {
 
 async function call(path: string, opts: CallOpts = {}): Promise<Response> {
 	const withBindings = opts.withBindings ?? true;
+	const headers: Record<string, string> = {};
+	if (opts.origin) headers.origin = opts.origin;
+	if (opts.gateHeader) headers['x-hs-gate'] = opts.gateHeader;
 	return handle({
 		event: {
 			url: new URL(`https://t.local${path}`),
 			request: new Request(`https://t.local${path}`, {
 				method: opts.method ?? 'GET',
-				headers: opts.origin ? { origin: opts.origin } : undefined
+				headers: Object.keys(headers).length ? headers : undefined
 			}),
 			platform: withBindings
 				? ({
@@ -61,8 +67,8 @@ async function call(path: string, opts: CallOpts = {}): Promise<Response> {
 	});
 }
 
-/** 用初始密码（环境变量形态）签发解锁 cookie */
-async function unlockCookie(): Promise<string> {
+/** 用初始密码（环境变量形态）签发解锁值——cookie 值与 header/query token 同构 */
+async function unlockToken(): Promise<string> {
 	const state = await getGateState(d1.db, INIT_PW);
 	return issueUnlockValue(state.hash!);
 }
@@ -77,7 +83,7 @@ describe('站点密码门拦截', () => {
 	});
 
 	it('解锁 cookie 有效 → 放行到端点', async () => {
-		const res = await call('/api/tree', { defaultPw: INIT_PW, cookie: await unlockCookie() });
+		const res = await call('/api/tree', { defaultPw: INIT_PW, cookie: await unlockToken() });
 		expect(res.status).toBe(200);
 		expect(await res.text()).toBe('ok');
 	});
@@ -114,10 +120,66 @@ describe('站点密码门拦截', () => {
 	});
 
 	it('改密后旧 cookie 失效（重新 401）', async () => {
-		const old = await unlockCookie();
+		const old = await unlockToken();
 		expect((await call('/api/tree', { defaultPw: INIT_PW, cookie: old })).status).toBe(200);
 		await setGatePassword(d1.db, 'rotated-pass');
 		expect((await call('/api/tree', { defaultPw: INIT_PW, cookie: old })).status).toBe(401);
+	});
+});
+
+describe('门三源凭证（cookie ?? x-hs-gate ?? ?hs_gate=）', () => {
+	it('x-hs-gate 有效 token → 过门（跨源 Web / 桌面 token 轨）', async () => {
+		const res = await call('/api/tree', { defaultPw: INIT_PW, gateHeader: await unlockToken() });
+		expect(res.status).toBe(200);
+		expect(await res.text()).toBe('ok');
+	});
+
+	it('?hs_gate= 有效 token → /f/ 路径过门（Audio.src 无法带 header）', async () => {
+		const token = await unlockToken();
+		const res = await call(`/f/some-id?hs_gate=${encodeURIComponent(token)}`, {
+			defaultPw: INIT_PW
+		});
+		expect(res.status).toBe(200);
+	});
+
+	it('cookie 优先：cookie 存在时 header 不参与（同源 Web 行为零回归）', async () => {
+		const good = await unlockToken();
+		// cookie 有效 + header 错值 → 过门（cookie 优先）
+		expect(
+			(await call('/api/tree', { defaultPw: INIT_PW, cookie: good, gateHeader: 'fp.bogus' }))
+				.status
+		).toBe(200);
+		// cookie 错值 + header 有效 → 仍 401（header 不覆盖 cookie）
+		expect(
+			(await call('/api/tree', { defaultPw: INIT_PW, cookie: 'fp.bogus', gateHeader: good }))
+				.status
+		).toBe(401);
+	});
+
+	it('header 错值 → 401 site_locked 且带 CORS 头（跨源 fetch 错误码可读）', async () => {
+		const res = await call('/api/tree', {
+			defaultPw: INIT_PW,
+			gateHeader: 'deadbeef.bogussig',
+			corsOrigins: CORS_ORIGIN,
+			origin: CORS_ORIGIN
+		});
+		expect(res.status).toBe(401);
+		expect(((await res.json()) as { error: string }).error).toBe('site_locked');
+		expect(res.headers.get('Access-Control-Allow-Origin')).toBe(CORS_ORIGIN);
+	});
+
+	it('改密后旧 header token 失效（HMAC 密钥 = 当前密码 hash）', async () => {
+		const old = await unlockToken();
+		expect((await call('/api/tree', { defaultPw: INIT_PW, gateHeader: old })).status).toBe(200);
+		await setGatePassword(d1.db, 'rotated-pass');
+		expect((await call('/api/tree', { defaultPw: INIT_PW, gateHeader: old })).status).toBe(401);
+	});
+
+	it('门判定子请求数不增：三源凭证下仍只 1 条 settings 主键 SELECT', async () => {
+		const token = await unlockToken(); // 签发侧 1 条查询，不计入门判定
+		const before = d1.calls;
+		await call('/api/tree', { defaultPw: INIT_PW, gateHeader: token });
+		expect(d1.calls - before).toBe(1);
 	});
 });
 
@@ -126,7 +188,7 @@ describe('CORS 跨源白名单', () => {
 		for (const res of [
 			await call('/api/tree', {
 				defaultPw: INIT_PW,
-				cookie: await unlockCookie(),
+				cookie: await unlockToken(),
 				origin: CORS_ORIGIN
 			}), // 放行路径
 			await call('/api/tree', { defaultPw: INIT_PW, origin: CORS_ORIGIN }) // 门 401 路径
@@ -178,7 +240,7 @@ describe('CORS 跨源白名单', () => {
 	it('GET 命中：Allow-Origin 回显请求值 + Allow-Credentials + Vary: Origin', async () => {
 		const res = await call('/api/tree', {
 			defaultPw: INIT_PW,
-			cookie: await unlockCookie(),
+			cookie: await unlockToken(),
 			corsOrigins: CORS_ORIGIN,
 			origin: CORS_ORIGIN
 		});

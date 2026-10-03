@@ -1,20 +1,36 @@
 // /api/config 端到端：限制常量透出 + 存储池用量（与水位公式同口径）+ 登录时当日配额
+// + gate.locked 三源凭证（cookie / x-hs-gate / ?hs_gate=，防桌面解锁死循环）
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTestD1, type TestD1 } from '../../../test/d1-sqlite';
 import { createMemoryR2, type MemoryR2 } from '../../../test/r2-memory';
 import { signSession, SESSION_COOKIE } from '$lib/server/session';
+import { getGateState, issueUnlockValue } from '$lib/server/site-gate';
 import { GET } from './+server';
 
 const SECRET = 'config-test-secret';
 const UID = 4242;
+const GATE_PW = 'gate-pass-1';
 const h = (n: number) => n.toString(16).padStart(64, '0');
 
 let d1: TestD1;
 let r2: MemoryR2;
 let cookie = '';
 
-function call(cookieValue = cookie): Promise<Response> {
+interface CallOpts {
+	/** 模拟 SITE_DEFAULT_PASSWORD（配置 = 门启用） */
+	gatePw?: string;
+	/** x-hs-gate 头 */
+	gateHeader?: string;
+	/** 完整路径（含 query，如 ?hs_gate=） */
+	path?: string;
+}
+
+function call(cookieValue = cookie, opts: CallOpts = {}): Promise<Response> {
+	const path = opts.path ?? '/api/config';
 	return GET({
+		request: new Request(`https://t.local${path}`, {
+			headers: opts.gateHeader ? { 'x-hs-gate': opts.gateHeader } : undefined
+		}),
 		platform: {
 			env: {
 				DB: d1.db,
@@ -24,11 +40,12 @@ function call(cookieValue = cookie): Promise<Response> {
 				OSU_CLIENT_SECRET: 's',
 				R2_ACCOUNT_ID: 'acct',
 				R2_ACCESS_KEY_ID: 'ak',
-				R2_SECRET_ACCESS_KEY: 'sk'
+				R2_SECRET_ACCESS_KEY: 'sk',
+				SITE_DEFAULT_PASSWORD: opts.gatePw
 			}
 		},
 		cookies: { get: (n: string) => (n === SESSION_COOKIE ? cookieValue : undefined) },
-		url: new URL('https://t.local/api/config')
+		url: new URL(`https://t.local${path}`)
 	} as unknown as Parameters<typeof GET>[0]);
 }
 
@@ -101,6 +118,7 @@ describe('GET /api/config', () => {
 
 	it('无 bindings：storageUsedBytes=null（浏览功能不受影响）', async () => {
 		const res = await GET({
+			request: new Request('https://t.local/api/config'),
 			platform: undefined,
 			cookies: { get: () => undefined },
 			url: new URL('https://t.local/api/config')
@@ -110,5 +128,44 @@ describe('GET /api/config', () => {
 		expect(data.uploadEnabled).toBe(false);
 		expect(data.storageUsedBytes).toBeNull();
 		expect(data.dailyPackagesUsed).toBeNull();
+	});
+});
+
+describe('GET /api/config gate.locked 三源凭证', () => {
+	it('门启用无凭证 → locked:true', async () => {
+		const res = await call('', { gatePw: GATE_PW });
+		expect(res.status).toBe(200);
+		expect(((await res.json()) as { gate: { locked: boolean } }).gate.locked).toBe(true);
+	});
+
+	it('x-hs-gate 有效 token → locked:false（桌面解锁存 token 后 reload 不再死循环）', async () => {
+		const token = await issueUnlockValue((await getGateState(d1.db, GATE_PW)).hash!);
+		const res = await call('', { gatePw: GATE_PW, gateHeader: token });
+		expect(res.status).toBe(200);
+		expect(((await res.json()) as { gate: { locked: boolean } }).gate.locked).toBe(false);
+	});
+
+	it('?hs_gate= 有效 token → locked:false', async () => {
+		const token = await issueUnlockValue((await getGateState(d1.db, GATE_PW)).hash!);
+		const res = await call('', {
+			gatePw: GATE_PW,
+			path: `/api/config?hs_gate=${encodeURIComponent(token)}`
+		});
+		expect(res.status).toBe(200);
+		expect(((await res.json()) as { gate: { locked: boolean } }).gate.locked).toBe(false);
+	});
+
+	it('坏 token → locked:true', async () => {
+		const res = await call('', { gatePw: GATE_PW, gateHeader: 'deadbeef.bogussig' });
+		expect(res.status).toBe(200);
+		expect(((await res.json()) as { gate: { locked: boolean } }).gate.locked).toBe(true);
+	});
+
+	it('门判定子请求数不增：三源凭证下 config 仍只 1 条 settings SELECT + 1 条用量', async () => {
+		const token = await issueUnlockValue((await getGateState(d1.db, GATE_PW)).hash!);
+		const before = d1.calls;
+		const res = await call('', { gatePw: GATE_PW, gateHeader: token }); // 未登录：无 daily 查询
+		expect(res.status).toBe(200);
+		expect(d1.calls - before).toBe(2);
 	});
 });
