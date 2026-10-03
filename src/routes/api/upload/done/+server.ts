@@ -25,7 +25,7 @@ interface BlobAgg {
 }
 
 export const POST: RequestHandler = async ({ request, platform, cookies }) => {
-	const g = await requireUser(platform, cookies);
+	const g = await requireUser(platform, cookies, request);
 	if (g instanceof Response) return g;
 	const env = g.env;
 	const session = g.session;

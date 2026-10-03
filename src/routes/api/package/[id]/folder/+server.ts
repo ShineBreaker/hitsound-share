@@ -16,7 +16,7 @@ function validFolderPath(p: unknown): p is string {
 }
 
 export const PATCH: RequestHandler = async ({ params, request, platform, cookies }) => {
-	const g = await requirePackageOwner(platform, cookies, params.id);
+	const g = await requirePackageOwner(platform, cookies, request, params.id);
 	if (g instanceof Response) return g;
 
 	const body = (await request.json().catch(() => null)) as { from?: unknown; to?: unknown } | null;
@@ -58,7 +58,7 @@ export const PATCH: RequestHandler = async ({ params, request, platform, cookies
 
 /** DELETE：body { path } 删该文件夹及子文件夹内全部文件；包删空后自动从树消失（tree JOIN files） */
 export const DELETE: RequestHandler = async ({ params, request, platform, cookies }) => {
-	const g = await requirePackageOwner(platform, cookies, params.id);
+	const g = await requirePackageOwner(platform, cookies, request, params.id);
 	if (g instanceof Response) return g;
 
 	const body = (await request.json().catch(() => null)) as { path?: unknown } | null;

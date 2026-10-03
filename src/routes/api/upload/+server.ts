@@ -36,7 +36,7 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 	}
 
 	// 登录态（上传必须登录）
-	const g = await requireUser(platform, cookies);
+	const g = await requireUser(platform, cookies, request);
 	if (g instanceof Response) return g;
 	const session = g.session;
 

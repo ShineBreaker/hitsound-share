@@ -210,7 +210,9 @@ describe('CORS 跨源白名单', () => {
 		expect(res.headers.get('Access-Control-Allow-Methods')).toBe(
 			'GET, POST, PUT, PATCH, DELETE, OPTIONS'
 		);
-		expect(res.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type, x-hs-gate');
+		expect(res.headers.get('Access-Control-Allow-Headers')).toBe(
+			'Content-Type, x-hs-gate, x-hs-session'
+		);
 		expect(res.headers.get('Access-Control-Max-Age')).toBe('86400');
 	});
 

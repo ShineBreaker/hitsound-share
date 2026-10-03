@@ -7,14 +7,14 @@ import type { RequestHandler } from './$types';
 import { requireSuperAdmin } from '$lib/server/guard';
 import { findUserByIdent, listAdmins, setAdmin } from '$lib/server/admin';
 
-export const GET: RequestHandler = async ({ platform, cookies }) => {
-	const g = await requireSuperAdmin(platform, cookies);
+export const GET: RequestHandler = async ({ request, platform, cookies }) => {
+	const g = await requireSuperAdmin(platform, cookies, request);
 	if (g instanceof Response) return g;
 	return json({ admins: await listAdmins(g.env.DB) });
 };
 
 export const POST: RequestHandler = async ({ request, platform, cookies }) => {
-	const g = await requireSuperAdmin(platform, cookies);
+	const g = await requireSuperAdmin(platform, cookies, request);
 	if (g instanceof Response) return g;
 
 	const body = (await request.json().catch(() => null)) as { user?: unknown } | null;
@@ -32,7 +32,7 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 };
 
 export const DELETE: RequestHandler = async ({ request, platform, cookies }) => {
-	const g = await requireSuperAdmin(platform, cookies);
+	const g = await requireSuperAdmin(platform, cookies, request);
 	if (g instanceof Response) return g;
 
 	const body = (await request.json().catch(() => null)) as { osu_id?: unknown } | null;

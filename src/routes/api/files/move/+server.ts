@@ -108,7 +108,7 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 	const toFolder = body.toFolder;
 
 	// 1. 目标包：包主/管理员 + visible 非影子（pending / 影子 visible 行不作迁移目标）
-	const g = await requirePackageOwner(platform, cookies, toPackage);
+	const g = await requirePackageOwner(platform, cookies, request, toPackage);
 	if (g instanceof Response) return g;
 	if (g.pkg.status !== 'visible' || g.pkg.append_to !== null) {
 		return json({ error: 'bad_target' }, { status: 409 });

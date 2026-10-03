@@ -97,7 +97,7 @@ const MAX_DELETE_IDS = 500;
  * 系统导入文件（owner NULL）仅管理员可动。
  */
 export const DELETE: RequestHandler = async ({ request, platform, cookies }) => {
-	const g = await requireUser(platform, cookies);
+	const g = await requireUser(platform, cookies, request);
 	if (g instanceof Response) return g;
 	const env = g.env;
 
@@ -148,7 +148,7 @@ export const DELETE: RequestHandler = async ({ request, platform, cookies }) => 
  * name trim 后 1-100 字符，含路径分隔符（/ \）→ 400 bad_name。
  */
 export const PATCH: RequestHandler = async ({ request, platform, cookies }) => {
-	const g = await requireUser(platform, cookies);
+	const g = await requireUser(platform, cookies, request);
 	if (g instanceof Response) return g;
 
 	const body = (await request.json().catch(() => null)) as { id?: unknown; name?: unknown } | null;

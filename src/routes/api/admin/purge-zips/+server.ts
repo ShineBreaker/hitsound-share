@@ -9,8 +9,8 @@ import { isAdmin } from '$lib/server/admin';
 
 const BATCH = 500;
 
-export const POST: RequestHandler = async ({ platform, cookies }) => {
-	const g = await requireUser(platform, cookies);
+export const POST: RequestHandler = async ({ request, platform, cookies }) => {
+	const g = await requireUser(platform, cookies, request);
 	if (g instanceof Response) return g;
 	const env = g.env;
 	if (!(await isAdmin(env.DB, g.secrets, g.session.osuId))) {

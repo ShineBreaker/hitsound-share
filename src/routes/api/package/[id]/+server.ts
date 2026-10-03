@@ -13,7 +13,7 @@ import { isAdmin } from '$lib/server/admin';
  * 被并包的 legacy original.zip）
  */
 export const PATCH: RequestHandler = async ({ params, request, platform, cookies }) => {
-	const g = await requirePackageOwner(platform, cookies, params.id);
+	const g = await requirePackageOwner(platform, cookies, request, params.id);
 	if (g instanceof Response) return g;
 
 	const body = (await request.json().catch(() => null)) as { name?: unknown; merge?: unknown } | null;
@@ -97,8 +97,8 @@ export const PATCH: RequestHandler = async ({ params, request, platform, cookies
 	return json({ ok: true, merged: true, targetId: target.id, deduped });
 };
 
-export const DELETE: RequestHandler = async ({ params, platform, cookies }) => {
-	const g = await requirePackageOwner(platform, cookies, params.id);
+export const DELETE: RequestHandler = async ({ params, request, platform, cookies }) => {
+	const g = await requirePackageOwner(platform, cookies, request, params.id);
 	if (g instanceof Response) return g;
 
 	await releasePackage(g.env, g.pkg.id);

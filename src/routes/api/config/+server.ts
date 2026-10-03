@@ -10,7 +10,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSecrets, uploadCapable } from '$lib/server/env';
 import { getEnv } from '$lib/server/media';
-import { verifySession, SESSION_COOKIE } from '$lib/server/session';
+import { readSession, SESSION_COOKIE, SESSION_HEADER } from '$lib/server/session';
 import { GATE_COOKIE, isSiteUnlocked, pickGateCredential } from '$lib/server/site-gate';
 import {
 	GLOBAL_CAP_BYTES,
@@ -49,7 +49,11 @@ export const GET: RequestHandler = async ({ platform, cookies, request, url }) =
 		storageUsedBytes = usage?.used ?? 0;
 
 		const user = secrets.SESSION_SECRET
-			? await verifySession(cookies.get(SESSION_COOKIE), secrets.SESSION_SECRET)
+			? await readSession(
+					cookies.get(SESSION_COOKIE),
+					request.headers.get(SESSION_HEADER),
+					secrets.SESSION_SECRET
+				)
 			: null;
 		if (user) {
 			const counted = await env.DB.prepare(

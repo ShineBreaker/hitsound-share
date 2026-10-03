@@ -21,15 +21,20 @@ interface CallOpts {
 	gatePw?: string;
 	/** x-hs-gate 头 */
 	gateHeader?: string;
+	/** x-hs-session 头（登录态 header 轨） */
+	sessionHeader?: string;
 	/** 完整路径（含 query，如 ?hs_gate=） */
 	path?: string;
 }
 
 function call(cookieValue = cookie, opts: CallOpts = {}): Promise<Response> {
 	const path = opts.path ?? '/api/config';
+	const headers: Record<string, string> = {};
+	if (opts.gateHeader) headers['x-hs-gate'] = opts.gateHeader;
+	if (opts.sessionHeader) headers['x-hs-session'] = opts.sessionHeader;
 	return GET({
 		request: new Request(`https://t.local${path}`, {
-			headers: opts.gateHeader ? { 'x-hs-gate': opts.gateHeader } : undefined
+			headers: Object.keys(headers).length ? headers : undefined
 		}),
 		platform: {
 			env: {
@@ -167,5 +172,24 @@ describe('GET /api/config gate.locked 三源凭证', () => {
 		const res = await call('', { gatePw: GATE_PW, gateHeader: token }); // 未登录：无 daily 查询
 		expect(res.status).toBe(200);
 		expect(d1.calls - before).toBe(2);
+	});
+});
+
+describe('GET /api/config 登录态双轨凭证', () => {
+	it('x-hs-session 有效（无 cookie）→ dailyPackagesUsed 返回（桌面 token 轨登录）', async () => {
+		await addPackage('hp1', sqliteUtc(), 0);
+		const res = await call(undefined, {
+			sessionHeader: await signSession({ osuId: UID, username: 'tester', avatarUrl: null }, SECRET)
+		});
+		expect(res.status).toBe(200);
+		expect(((await res.json()) as { dailyPackagesUsed: number | null }).dailyPackagesUsed).toBe(1);
+	});
+
+	it('无效 cookie 遮蔽有效 x-hs-session → 未登录（cookie 优先，同源零回归）', async () => {
+		const res = await call('stale.badsig', {
+			sessionHeader: await signSession({ osuId: UID, username: 'tester', avatarUrl: null }, SECRET)
+		});
+		const data = (await res.json()) as { dailyPackagesUsed: number | null };
+		expect(data.dailyPackagesUsed).toBeNull();
 	});
 });

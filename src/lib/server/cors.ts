@@ -5,7 +5,8 @@
 // 白名单每请求解析（与 getSecrets 同语义），不做模块级缓存（isolate 环境变量可热切换）。
 
 const ALLOW_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
-const ALLOW_HEADERS = 'Content-Type, x-hs-gate';
+// x-hs-session：登录态 header 轨（桌面端 cookie 不可靠），与 x-hs-gate 并存的跨源自定义头
+const ALLOW_HEADERS = 'Content-Type, x-hs-gate, x-hs-session';
 const MAX_AGE_S = '86400'; // 浏览器缓存预检结果一天，减少预检往返
 
 /** 解析白名单为小写 Set；未配置/全空白返回空 Set（= 不启用 CORS） */

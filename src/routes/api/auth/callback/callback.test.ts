@@ -1,11 +1,11 @@
-// /api/auth/callback：state 尾段白名单 origin → hs_session SameSite=None + 302 前端域/；
-// 无尾段 / 坏尾段 / 非白名单 → lax + '/' 同源现状。osu! 出网走全局 fetch stub
+// /api/auth/callback：state 尾段白名单 origin → hs_session SameSite=None + 302 前端域/?hs_code=<交付码>；
+// 无尾段 / 坏尾段 / 非白名单 → lax + '/' 同源现状（不带 code）。osu! 出网走全局 fetch stub
 // （osuFetch 的 host 白名单校验照跑，只替换外部网络边界）；D1 用 node:sqlite adapter
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { isRedirect } from '@sveltejs/kit';
 import { createTestD1, type TestD1 } from '../../../../test/d1-sqlite';
 import { createMemoryR2, type MemoryR2 } from '../../../../test/r2-memory';
-import { SESSION_COOKIE } from '$lib/server/session';
+import { EXCHANGE_TTL_S, SESSION_COOKIE, verifySession } from '$lib/server/session';
 import { GET } from './+server';
 
 const SECRET = 'callback-test-secret';
@@ -110,11 +110,22 @@ function sessionCookie(r: CallbackResult): CookieSet {
 	return r.sets.find((c) => c.name === SESSION_COOKIE)!;
 }
 
+/** 302 location 的 hs_code query 值；无则 null */
+function codeOf(location: string): string | null {
+	return new URL(location, 'https://api.local').searchParams.get('hs_code');
+}
+
 describe('跨源会话签发（state 尾段 = 白名单 origin）', () => {
-	it('SameSite=None + 302 到 <前端域>/；users upsert 生效', async () => {
+	it('SameSite=None + 302 到 <前端域>/?hs_code=<短时效交付码>；users upsert 生效', async () => {
 		const r = await callCallback(`${HEX}.${b64url(CORS_ORIGIN)}`, { corsOrigins: CORS_ORIGIN });
 		expect(r.status).toBe(302);
-		expect(r.location).toBe(`${CORS_ORIGIN}/`);
+		const code = codeOf(r.location);
+		expect(code).toBeTruthy();
+		expect(r.location.startsWith(`${CORS_ORIGIN}/?hs_code=`)).toBe(true);
+		// 交付码 = 与 session 同 HMAC 的 60s 短时效签名值，可验出同一用户
+		const user = await verifySession(code!, SECRET);
+		expect(user?.osuId).toBe(OSU_ID);
+		expect(user!.exp - Math.floor(Date.now() / 1000)).toBeLessThanOrEqual(EXCHANGE_TTL_S);
 		expect(sessionCookie(r).opts.sameSite).toBe('none');
 		const row = await d1.db
 			.prepare('SELECT username FROM users WHERE osu_id = ?1')
@@ -128,7 +139,7 @@ describe('跨源会话签发（state 尾段 = 白名单 origin）', () => {
 			corsOrigins: CORS_ORIGIN
 		});
 		expect(r.status).toBe(302);
-		expect(r.location).toBe(`${CORS_ORIGIN}/`);
+		expect(r.location.startsWith(`${CORS_ORIGIN}/?hs_code=`)).toBe(true);
 	});
 
 	it('白名单多值（逗号分隔）第二项同样命中', async () => {
@@ -136,16 +147,17 @@ describe('跨源会话签发（state 尾段 = 白名单 origin）', () => {
 		const r = await callCallback(`${HEX}.${b64url(other)}`, {
 			corsOrigins: `${CORS_ORIGIN},${other}`
 		});
-		expect(r.location).toBe(`${other}/`);
+		expect(r.location.startsWith(`${other}/?hs_code=`)).toBe(true);
 		expect(sessionCookie(r).opts.sameSite).toBe('none');
 	});
 });
 
-describe('同源现状分支（lax + 302 /）', () => {
-	it('纯 hex state（无尾段）→ lax + /', async () => {
+describe('同源现状分支（lax + 302 /，无 hs_code）', () => {
+	it('纯 hex state（无尾段）→ lax + /（不带 code，同源零变化）', async () => {
 		const r = await callCallback(HEX, { corsOrigins: CORS_ORIGIN });
 		expect(r.status).toBe(302);
 		expect(r.location).toBe('/');
+		expect(codeOf(r.location)).toBeNull();
 		expect(sessionCookie(r).opts.sameSite).toBe('lax');
 	});
 

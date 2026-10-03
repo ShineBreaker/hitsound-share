@@ -1,13 +1,15 @@
 // /api/auth/callback：授权码换 token → GET api/v2/me → users upsert → 签 HMAC cookie。
 // 服务端出网仅 https://osu.ppy.sh（osuFetch 白名单）；token 用完即弃不落日志。
-// state 含白名单 origin 尾段（login 编入）时，会话签 SameSite=None 并 302 回前端域
+// state 含白名单 origin 尾段（login 编入）时，会话签 SameSite=None 并 302 回前端域，
+// 且附带短时效交付码 ?hs_code=（桌面 WebView 第三方 cookie 不可靠：前端以
+// POST /api/auth/exchange 换完整会话签名值，此后走 x-hs-session 头）；同源分支零变化
 import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSecrets } from '$lib/server/env';
 import { parseCorsOrigins } from '$lib/server/cors';
 import { getEnv } from '$lib/server/media';
 import { osuFetch } from '$lib/server/osu';
-import { SESSION_COOKIE, SESSION_MAX_AGE_S, signSession } from '$lib/server/session';
+import { SESSION_COOKIE, SESSION_MAX_AGE_S, EXCHANGE_TTL_S, signSession } from '$lib/server/session';
 
 interface OsuToken {
 	access_token?: string;
@@ -96,10 +98,8 @@ export const GET: RequestHandler = async ({ url, platform, cookies }) => {
 		// 4. 签发 session cookie（HttpOnly，前端拿不到内容）；
 		//    白名单前端来源（state 尾段，login 编入）→ SameSite=None 供跨源 fetch 携带
 		const frontOrigin = frontOriginFromState(state, parseCorsOrigins(secrets.CORS_ORIGINS));
-		const value = await signSession(
-			{ osuId: me.id, username: me.username, avatarUrl: me.avatar_url ?? null },
-			secrets.SESSION_SECRET
-		);
+		const payload = { osuId: me.id, username: me.username, avatarUrl: me.avatar_url ?? null };
+		const value = await signSession(payload, secrets.SESSION_SECRET);
 		cookies.set(SESSION_COOKIE, value, {
 			path: '/',
 			httpOnly: true,
@@ -108,7 +108,14 @@ export const GET: RequestHandler = async ({ url, platform, cookies }) => {
 			maxAge: SESSION_MAX_AGE_S
 		});
 
-		redirectTarget = frontOrigin ? `${frontOrigin}/` : '/';
+		// 跨源分支附短时效交付码（与 session 同 HMAC 同构，60s exp）：桌面 WebView 第三方
+		// cookie 不可靠，前端落地页以 code 换完整会话后走 x-hs-session 头；cookie 照发——
+		// 跨源 Web 域仍以 cookie 轨为主。同源分支零变化（不带 code）
+		redirectTarget = frontOrigin
+			? `${frontOrigin}/?hs_code=${encodeURIComponent(
+					await signSession(payload, secrets.SESSION_SECRET, EXCHANGE_TTL_S)
+				)}`
+			: '/';
 	} catch {
 		return new Response('OAuth callback failed', { status: 502 });
 	}

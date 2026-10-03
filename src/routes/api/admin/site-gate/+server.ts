@@ -15,7 +15,7 @@ import {
 } from '$lib/server/site-gate';
 
 export const PUT: RequestHandler = async ({ request, platform, cookies }) => {
-	const g = await requireAdmin(platform, cookies);
+	const g = await requireAdmin(platform, cookies, request);
 	if (g instanceof Response) return g;
 
 	const body = (await request.json().catch(() => null)) as { password?: unknown } | null;

@@ -3,8 +3,8 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUser } from '$lib/server/guard';
 
-export const GET: RequestHandler = async ({ platform, cookies }) => {
-	const g = await requireUser(platform, cookies);
+export const GET: RequestHandler = async ({ request, platform, cookies }) => {
+	const g = await requireUser(platform, cookies, request);
 	if (g instanceof Response) return g;
 
 	const { results } = await g.env.DB.prepare(
