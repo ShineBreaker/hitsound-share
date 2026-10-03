@@ -2,6 +2,7 @@
 	// 我的上传列表：包名/状态/文件数/大小/时间 + 删除（上传者删自己的包）
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
+	import { apiFetch } from '$lib/api-base.svelte';
 
 	interface Props {
 		onclose: () => void;
@@ -28,7 +29,7 @@
 		loading = true;
 		loadFailed = false;
 		try {
-			const res = await fetch('/api/my/packages');
+			const res = await apiFetch('/api/my/packages');
 			if (!res.ok) throw new Error();
 			packages = ((await res.json()) as { packages: MyPackage[] }).packages;
 		} catch {
@@ -43,7 +44,9 @@
 		deletingId = pkg.id;
 		notice = '';
 		try {
-			const res = await fetch(`/api/package/${encodeURIComponent(pkg.id)}`, { method: 'DELETE' });
+			const res = await apiFetch(`/api/package/${encodeURIComponent(pkg.id)}`, {
+				method: 'DELETE'
+			});
 			if (!res.ok) throw new Error();
 			packages = packages.filter((p) => p.id !== pkg.id);
 			notice = t('my.deleted');

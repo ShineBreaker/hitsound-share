@@ -1,7 +1,8 @@
 // 前端 API 封装：树 / 文件列表 / 波形（带缓存）/ 配置 / 整包下载清单 / 改名 / 移动；
-// 含树构建（与后端聚合同口径）
+// 含树构建（与后端聚合同口径）。网络出口统一走 api-base 的 apiFetch（可配 API base + 门 token）
 import type { FileRow, TreeNode, ZipManifest } from '$lib/types';
 import type { KitFile } from '$lib/kit.svelte';
+import { apiFetch, setGateToken } from '$lib/api-base.svelte';
 
 export interface TreePackage {
 	id: string;
@@ -26,7 +27,7 @@ export function canManage(me: Me, ownerId: number | null): boolean {
 }
 
 async function getJSON<T>(url: string, init?: RequestInit): Promise<T> {
-	const res = await fetch(url, init);
+	const res = await apiFetch(url, init);
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);
 	return (await res.json()) as T;
 }
@@ -67,9 +68,12 @@ export function fetchConfig(): Promise<SiteConfig> {
 	return getJSON('/api/config');
 }
 
-/** 解锁站点访问密码门；密码错误 reject Error('wrong_password') */
-export function unlockSite(password: string): Promise<void> {
-	return mutateJSON('/api/site-gate', 'POST', { password }).then(() => undefined);
+/** 解锁站点访问密码门；密码错误 reject Error('wrong_password')。
+ *  响应体含 token（跨源后端下发）时存 localStorage 供 apiFetch/absoluteApiUrl 使用；
+ *  旧后端无该字段则忽略，cookie 语义照旧 */
+export async function unlockSite(password: string): Promise<void> {
+	const res = await mutateJSON<{ token?: string }>('/api/site-gate', 'POST', { password });
+	if (typeof res.token === 'string') setGateToken(res.token);
 }
 
 /** 修改站点访问密码（管理员）；非法长度 reject Error('bad_password') */
@@ -92,7 +96,7 @@ export function fetchZipManifest(pkgId: string): Promise<ZipManifest> {
 }
 
 async function mutateJSON<T>(url: string, method: string, body?: unknown): Promise<T> {
-	const res = await fetch(url, {
+	const res = await apiFetch(url, {
 		method,
 		headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
 		body: body === undefined ? undefined : JSON.stringify(body)
@@ -129,15 +133,15 @@ export class RenameConflictError extends Error {
 /**
  * 大类改名（包名）；merge=true 时把本包并入最老同名包（先撞 409 再带 merge 重试的流程见页面层）。
  * 不走 mutateJSON：409 name_taken 的 body 里的 targetId 也得带出来，mutateJSON 只留 error 码——
- * 故手写 fetch。约定不变：失败一律 throw，message = 服务端错误码；唯独 name_taken 抛
- * RenameConflictError（instanceof 判别 + targetId 字段），其余错误码仍是普通 Error
+ * 故手写请求（出口仍走 apiFetch）。约定不变：失败一律 throw，message = 服务端错误码；唯独
+ * name_taken 抛 RenameConflictError（instanceof 判别 + targetId 字段），其余错误码仍是普通 Error
  */
 export async function renamePackage(
 	pkgId: string,
 	name: string,
 	merge = false
 ): Promise<RenameResult> {
-	const res = await fetch(`/api/package/${encodeURIComponent(pkgId)}`, {
+	const res = await apiFetch(`/api/package/${encodeURIComponent(pkgId)}`, {
 		method: 'PATCH',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(merge ? { name, merge } : { name })

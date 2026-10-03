@@ -21,6 +21,7 @@
 	} from '$lib/upload-pipeline';
 	import { t } from '$lib/i18n';
 	import { fetchConfig, type SiteConfig } from '$lib/api';
+	import { apiFetch } from '$lib/api-base.svelte';
 
 	interface Props {
 		onclose: () => void;
@@ -59,7 +60,7 @@
 	async function loadMyPackages(): Promise<void> {
 		if (myPkgsLoaded) return;
 		try {
-			const res = await fetch('/api/my/packages');
+			const res = await apiFetch('/api/my/packages');
 			if (!res.ok) throw new Error();
 			myPkgs = ((await res.json()) as { packages: MyPkg[] }).packages;
 			myPkgsLoaded = true;
@@ -205,7 +206,8 @@
 			p,
 			target,
 			{
-				fetch: fetch.bind(window),
+				// 统一出口 apiFetch：/api/* 相对路径拼 base 带门凭证，R2 预签名绝对 URL 裸 fetch
+				fetch: apiFetch,
 				loadWasm: { unrar: loadUnrarWasm, sz: load7zWasm },
 				decodeMeta
 			},
@@ -234,7 +236,7 @@
 
 	/** 完成后「立即查看」：先强制预热树缓存（绕 60s max-age），再刷新页面立即可见 */
 	function viewNow(): void {
-		void fetch('/api/tree', { cache: 'reload' })
+		void apiFetch('/api/tree', { cache: 'reload' })
 			.catch(() => 0)
 			.then(() => location.reload());
 	}

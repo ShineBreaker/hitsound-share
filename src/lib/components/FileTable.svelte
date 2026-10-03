@@ -6,6 +6,7 @@
 	import type { FileRow } from '$lib/types';
 	import { t } from '$lib/i18n';
 	import { canManage, fetchPeaks, DND_FILE_MIME, type KitDragData, type Me } from '$lib/api';
+	import { absoluteApiUrl } from '$lib/api-base.svelte';
 	import { selection } from '$lib/selection.svelte';
 	import type { KitFile } from '$lib/kit.svelte';
 	import WaveformCanvas from './WaveformCanvas.svelte';
@@ -289,9 +290,10 @@
 							/>
 						</td>
 						<td class="col-dl">
+							<!-- 整页导航无法带 header：/f/ 前缀由 absoluteApiUrl 自动附 ?hs_gate= -->
 							<a
 								class="dl"
-								href={`/f/${encodeURIComponent(f.id)}/download`}
+								href={absoluteApiUrl(`/f/${encodeURIComponent(f.id)}/download`)}
 								download={f.name}
 								title={t('action.download')}
 								aria-label={t('action.download')}

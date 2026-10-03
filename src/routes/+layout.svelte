@@ -10,6 +10,7 @@
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
 	import { fetchConfig, fetchMe, type Me } from '$lib/api';
+	import { apiFetch, loginUrl } from '$lib/api-base.svelte';
 	import UploadDialog from '$lib/components/UploadDialog.svelte';
 	import MyPackages from '$lib/components/MyPackages.svelte';
 	import AdminPanel from '$lib/components/AdminPanel.svelte';
@@ -56,14 +57,14 @@
 	});
 
 	async function logout(): Promise<void> {
-		await fetch('/api/auth/logout', { method: 'POST' }).catch(() => null);
+		await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => null);
 		location.reload();
 	}
 
-	/** 未登录点上传 → 先走 OAuth 登录 */
+	/** 未登录点上传 → 先走 OAuth 登录（跨源时 loginUrl 带 hs_origin 供 state 编码前端来源） */
 	function onUploadClick(): void {
 		if (!me) {
-			location.href = '/api/auth/login';
+			location.href = loginUrl();
 			return;
 		}
 		showUpload = true;
@@ -92,7 +93,7 @@
 						{t('auth.logout')}
 					</button>
 				{:else}
-					<a class="btn lg" href="/api/auth/login">{t('app.login')}</a>
+					<a class="btn lg" href={loginUrl()}>{t('app.login')}</a>
 				{/if}
 				<button
 					class="btn primary lg"

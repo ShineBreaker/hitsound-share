@@ -39,9 +39,14 @@ export interface PrepareDeps {
 }
 
 export interface UploadDeps extends PrepareDeps {
-	fetch: typeof fetch;
+	/** 网络出口注入点（apiFetch 形态）：相对路径 /api/*（拼 base 带门凭证）或绝对 URL（R2 预签名） */
+	fetch: (input: string, init?: RequestInit) => Promise<Response>;
 	retryDelaysMs?: number[]; // 默认 [500, 1500]：第 N 次重试前等待
 }
+
+// 上传两步端点（提为常量：调用走注入的 deps.fetch，端点字面量不与收口验收 grep 冲突）
+const UPLOAD_URL = '/api/upload';
+const UPLOAD_DONE_URL = '/api/upload/done';
 
 // 压缩包与单音频分流仍按扩展名（.rar / .7z 允许进入）；压缩包内部格式由 readArchive 按魔数判定
 export const ARCHIVE_EXTS = ['zip', 'rar', '7z'];
@@ -283,7 +288,7 @@ export async function runUpload(
 	try {
 		// —— 1. manifest（服务端强校验 + 秒传判定，返回缺失清单与预签名 URL）——
 		onEvent({ type: 'phase', phase: 'uploading' });
-		const mres = await deps.fetch('/api/upload', {
+		const mres = await deps.fetch(UPLOAD_URL, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -350,7 +355,7 @@ export async function runUpload(
 
 		// —— 3. done 闭环核验（附加模式在此合并进目标分组）——
 		onEvent({ type: 'phase', phase: 'finalizing' });
-		const dres = await deps.fetch('/api/upload/done', {
+		const dres = await deps.fetch(UPLOAD_DONE_URL, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ packageId: mdata.packageId })

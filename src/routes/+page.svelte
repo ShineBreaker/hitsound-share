@@ -32,6 +32,7 @@
 	} from '$lib/api';
 	import { player } from '$lib/player.svelte';
 	import { saveZip } from '$lib/zip-save';
+	import { fetchIssuedUrl, absoluteApiUrl } from '$lib/api-base.svelte';
 	import { t } from '$lib/i18n';
 	import type { FileRow, TreeNode } from '$lib/types';
 	import { selection, assignSelection } from '$lib/selection.svelte';
@@ -152,7 +153,8 @@
 			await saveZip(manifest.name || 'package', {
 				entries: manifest.files.map((f) => ({ path: f.path, key: f.hash })),
 				load: async (hash) => {
-					const r = await fetch(manifest.urls[hash]);
+					// 清单 urls 可为 R2 预签名绝对 URL 或 API 域绝对/相对回退 URL，三支分派见 api-base
+					const r = await fetchIssuedUrl(manifest.urls[hash]);
 					if (!r.ok) throw new Error(`HTTP ${r.status}`);
 					return new Uint8Array(await r.arrayBuffer());
 				},
@@ -384,14 +386,14 @@
 		return true;
 	}
 
-	/** 点行：未播→播、播放中→暂停、暂停→继续（key = file.id） */
+	/** 点行：未播→播、播放中→暂停、暂停→继续（key = file.id；Audio.src 无法带 header，走 absoluteApiUrl） */
 	function togglePlay(file: FileRow): void {
-		player.toggle(file.id, `/f/${encodeURIComponent(file.id)}`, file.durationS ?? undefined);
+		player.toggle(file.id, absoluteApiUrl(`/f/${encodeURIComponent(file.id)}`), file.durationS ?? undefined);
 	}
 
 	/** 点波形：当前行直接跳；别的行先播、metadata 就绪后再跳 */
 	function seek(file: FileRow, ratio: number): void {
-		player.seek(file.id, `/f/${encodeURIComponent(file.id)}`, ratio, file.durationS ?? undefined);
+		player.seek(file.id, absoluteApiUrl(`/f/${encodeURIComponent(file.id)}`), ratio, file.durationS ?? undefined);
 	}
 
 	onMount(() => {

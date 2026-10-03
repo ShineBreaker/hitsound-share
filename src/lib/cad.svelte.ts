@@ -6,6 +6,7 @@
 // 热更新由 iframe 内部完成（重建 Skin → sourceChanged → 采样重取），不重载页面、不重置播放位置。
 import { kit } from './kit.svelte';
 import { osz } from './osz.svelte';
+import { apiFetch } from './api-base.svelte';
 
 /** iframe → 宿主的谱面元信息（对应 PreviewMeta） */
 export interface CadMeta {
@@ -306,7 +307,7 @@ export function createByteCache(
  *  按 id 缓存字节：files.id 是文件行 id（内容不变），预览热更新反复重建
  *  时未变的格子项不再走网络栈（S7）；LRU 封顶（BYTE_CACHE_CAP）。 */
 const byteCache = createByteCache(async (id) => {
-	const r = await fetch(`/f/${encodeURIComponent(id)}`);
+	const r = await apiFetch(`/f/${encodeURIComponent(id)}`);
 	if (!r.ok) throw new Error(`HTTP ${r.status}`);
 	return new Uint8Array(await r.arrayBuffer());
 }, BYTE_CACHE_CAP);

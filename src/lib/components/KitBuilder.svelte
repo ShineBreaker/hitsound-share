@@ -8,6 +8,7 @@
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
 	import { DND_FILE_MIME, type KitDragData } from '$lib/api';
+	import { apiFetch, absoluteApiUrl } from '$lib/api-base.svelte';
 	import {
 		kit,
 		kitTarget,
@@ -124,14 +125,14 @@
 		kit.clear();
 	}
 
-	/** 点 chip 播放钮：未播→播、播放中→暂停、暂停→继续（同文件表交互） */
+	/** 点 chip 播放钮：未播→播、播放中→暂停、暂停→继续（同文件表交互；Audio.src 走 absoluteApiUrl 带 token query） */
 	function togglePlay(it: KitItem): void {
-		player.toggle(`kit:${it.uid}`, `/f/${encodeURIComponent(it.id)}`);
+		player.toggle(`kit:${it.uid}`, absoluteApiUrl(`/f/${encodeURIComponent(it.id)}`));
 	}
 
 	/** 格子项音源：fetch 不带 Range → 200 全量（kit zip 与 osz 导出共用） */
 	async function loadFileBytes(id: string): Promise<Uint8Array> {
-		const r = await fetch(`/f/${encodeURIComponent(id)}`);
+		const r = await apiFetch(`/f/${encodeURIComponent(id)}`);
 		if (!r.ok) throw new Error(`HTTP ${r.status}`);
 		return new Uint8Array(await r.arrayBuffer());
 	}
