@@ -25,6 +25,14 @@ build:
 preview:
     pnpm preview
 
+# 纯静态产物（Tauri frontendDist 消费，docs/desktop.md）：先常规构建再抽取 + CSP 放宽后处理
+build-static: build
+    node scripts/build-static.mjs
+
+# 本地起静态产物 :8798（跨源联调用；绑定 127.0.0.1 与后端 localhost 形成跨站）
+serve-static:
+    cd build-static && python3 -m http.server 8798 --bind 127.0.0.1
+
 # 提交前门禁：单测 + 构建全绿
 verify: test build
 

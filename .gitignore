@@ -12,6 +12,7 @@ Thumbs.db
 .mimosa
 .wrangler/
 .svelte-kit/
+build-static/
 
 # 密钥
 .env
