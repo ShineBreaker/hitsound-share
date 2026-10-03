@@ -9,8 +9,9 @@
 // 流程：mktemp 工作目录 → 起后端（假密钥 + CORS_ORIGINS 白名单）→ 播种 schema +
 //   门密码 settings 行（sha256(SALT+密码)，SALT 复刻自 site-gate.ts）+ 包/文件行 +
 //   R2 对象 → SELECT COUNT 验证（d1 execute 假失败坑）→ node 侧 HTTP 断言（预检/
-//   401/解锁/树/波形）→ 起 vite dev :5173 + headless Chromium CDP → localStorage 预置
-//   → 遮罩→解锁→树渲染（截图 /tmp）→ :8799 同源回归（SiteGate 表单解锁→树渲染）
+//   401/解锁/树/波形/会话头轨）→ 起 vite dev :5173 + headless Chromium CDP → localStorage
+//   预置（base/gate/session token）→ 遮罩→解锁→树渲染（截图 /tmp）→ 桌面登录态（顶栏
+//   用户钮）→ :8799 同源回归（SiteGate 表单解锁→树渲染）
 //   → 静态产物伺服（原样 :8797 shell 可加载 + CSP 本地适配副本 :8798 树渲染）。
 //
 // 已知姿势（AGENTS 坑位）：
@@ -23,7 +24,7 @@
 // 用法：node scripts/smoke-split.mjs [--keep-servers]
 //   --keep-servers：跑完不杀进程不清理，打印端口 / 状态目录供人工调试。
 // 前置：just build build-static（后端伺服 .svelte-kit/cloudflare，静态通道抽查 build-static）。
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -49,7 +50,7 @@ const GATE_SALT = 'hitsound-share/site-gate/v1';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const step = (msg) => console.log(`✓ ${msg}`);
 
-// ── 验收清单结果收集（对应 ask 的 7 项，末尾打印 JSON 摘录）────────────────
+// ── 验收清单结果收集（对应 ask 的 7 项 + 桌面登录态 1 项，末尾打印 JSON 摘录）──────
 const checks = [];
 function check(name, ok, detail) {
 	checks.push({ name, ok, detail });
@@ -83,6 +84,22 @@ function seedWav() {
 const wavBytes = seedWav();
 const HASH = createHash('sha256').update(wavBytes).digest('hex');
 const pwHashHex = createHash('sha256').update(GATE_SALT + PASSWORD).digest('hex');
+
+// ── 手造合法会话签名值（桌面登录态验收用）────────────────────────────────────
+// 复刻 src/lib/server/session.ts 的值格式：b64url(JSON{osuId,username,avatarUrl,exp})
+// + '.' + b64url(HMAC-SHA256(SESSION_SECRET, body))——密钥须与后端 -b 注入的一致
+const SESSION_SECRET_SMOKE = 'dev-secret-0123456789abcdef01234567';
+const SESSION_OSU_ID = 4242;
+const SESSION_USERNAME = 'smoke-desktop';
+const sessionPayload = {
+	osuId: SESSION_OSU_ID,
+	username: SESSION_USERNAME,
+	avatarUrl: null,
+	exp: Math.floor(Date.now() / 1000) + 7 * 24 * 3600
+};
+const sessionBody = Buffer.from(JSON.stringify(sessionPayload)).toString('base64url');
+const sessionSig = createHmac('sha256', SESSION_SECRET_SMOKE).update(sessionBody).digest('base64url');
+const SESSION_TOKEN = `${sessionBody}.${sessionSig}`;
 
 // ── 子进程管理（detached 进程组，收尾整组杀——wrangler 的 workerd 是孙进程）──
 const TMP = mkdtempSync(path.join(tmpdir(), 'hs-smoke-split-'));
@@ -202,6 +219,7 @@ writeFileSync(wavPath, wavBytes);
 const d1 = ['d1', 'execute', 'hitsound-share-db', '--local', '--persist-to', STATE];
 await run(WRANGLER, [...d1, '--file', path.join(ROOT, 'schema.sql')]);
 const fixture = `INSERT INTO settings (key, value) VALUES ('site_password_hash', '${pwHashHex}');
+INSERT INTO users (osu_id, username) VALUES (${SESSION_OSU_ID}, '${SESSION_USERNAME}');
 INSERT INTO packages (id, name, uploader_osu_id, size_bytes, logical_size, file_count, status, append_to)
   VALUES ('smoke-pkg-1', '冒烟包', NULL, 0, ${wavBytes.length}, 1, 'visible', NULL);
 INSERT INTO blobs (hash, size, mime, refcount) VALUES ('${HASH}', ${wavBytes.length}, 'audio/wav', 1);
@@ -225,13 +243,13 @@ if (Number(row.f) !== 1 || Number(row.s) !== 1)
 step(`播种完成：settings 门密码行 + packages/blobs/files 各 1 行 + R2 对象（hash=${HASH.slice(0, 12)}…）`);
 
 // ── 3. node 侧 HTTP 断言（服务端半边，逐项映射验收清单）───────────────────
-// 验收 1：OPTIONS 预检（自定义头 x-hs-gate + Content-Type）
+// 验收 1：OPTIONS 预检（自定义头 x-hs-gate + x-hs-session + Content-Type）
 const opt = await fetch(`${API}/api/tree`, {
 	method: 'OPTIONS',
 	headers: {
 		Origin: FRONT_ORIGIN,
 		'Access-Control-Request-Method': 'GET',
-		'Access-Control-Request-Headers': 'content-type,x-hs-gate'
+		'Access-Control-Request-Headers': 'content-type,x-hs-gate,x-hs-session'
 	}
 });
 {
@@ -240,7 +258,8 @@ const opt = await fetch(`${API}/api/tree`, {
 	const acah = (opt.headers.get('access-control-allow-headers') ?? '').toLowerCase();
 	const ok = opt.status >= 200 && opt.status < 300
 		&& acao === FRONT_ORIGIN && acac === 'true'
-		&& acah.includes('content-type') && acah.includes('x-hs-gate');
+		&& acah.includes('content-type') && acah.includes('x-hs-gate')
+		&& acah.includes('x-hs-session');
 	check('1-OPTIONS 预检', ok,
 		`OPTIONS /api/tree → ${opt.status}；allow-origin=${acao} allow-credentials=${acac} allow-headers=${acah}`);
 }
@@ -286,6 +305,17 @@ const tree = await fetch(`${API}/api/tree`, {
 	const ok = wf.status === 200 && Array.isArray(peaks) && peaks.length === 4;
 	check('7-/api/waveform 带凭证 200', ok,
 		`GET /api/waveform?ids=smoke-file-1（x-hs-gate）→ ${wf.status}；peaks=${JSON.stringify(peaks)}`);
+}
+// 验收 8（API 半边）：桌面会话头轨——手造合法签名值经 x-hs-session，跨源返回登录态
+{
+	const me = await fetch(`${API}/api/auth/me`, {
+		headers: { Origin: FRONT_ORIGIN, 'x-hs-gate': TOKEN, 'x-hs-session': SESSION_TOKEN }
+	});
+	const body = await me.json().catch(() => ({}));
+	const ok =
+		me.status === 200 && body.loggedIn === true && body.username === SESSION_USERNAME;
+	check('8-API 会话头轨（x-hs-session）', ok,
+		`GET /api/auth/me（x-hs-gate + x-hs-session，手造 7 天签名值）→ ${me.status}；loggedIn=${body.loggedIn} username=${body.username}`);
 }
 
 // ── 4. vite dev 前端 + headless Chromium CDP（浏览器半边）──────────────────
@@ -415,6 +445,20 @@ const shot5173 = '/tmp/hitsound-smoke-split-5173.png';
 await screenshot(shot5173);
 check('4-vite dev 页面渲染树', true,
 	`:5173 加载 + localStorage 预置（hs_api_base/hs_gate_token）→ 树渲染「冒烟包」+ 文件表 smoke.wav；netLog 跨源 /api/tree=200；截图 ${shot5173}`);
+
+// ── 验收 8（浏览器半边）：桌面登录态——预置 hs_session_token（模拟 ?hs_code= 交换
+// 成功后的存量），reload → fetchMe 经 x-hs-session 轨 → 顶栏出现用户名按钮。
+// 真实 osu OAuth 全流程无法本地测（唯一出网通道 osu.ppy.sh），交付码交换逻辑由单测覆盖
+await evalJs(`localStorage.setItem('hs_session_token', ${JSON.stringify(SESSION_TOKEN)}); location.reload(); true`);
+const netMarkMe = netLog.length;
+await waitFor(`!!document.querySelector('.user')`, 15_000, '预置 hs_session_token 后顶栏出现登录用户钮');
+const userText = await evalJs(`document.querySelector('.user')?.textContent ?? ''`);
+await waitNet((e) => e.url.startsWith(`${API}/api/auth/me`) && e.status === 200, 10_000, '跨源 /api/auth/me 200（x-hs-session 轨）', netMarkMe);
+{
+	const ok = userText === SESSION_USERNAME;
+	check('8-桌面登录态（hs_session_token → x-hs-session）', ok,
+		`:5173 预置 hs_session_token → reload → 顶栏用户钮「${userText}」（期望 ${SESSION_USERNAME}）；netLog 跨源 /api/auth/me=200`);
+}
 
 // ── 验收 5：Web 同源回归（直接访问 :8799，同源模式不回归）──────────────────
 await send('Page.navigate', { url: `${API}/` });

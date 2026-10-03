@@ -56,8 +56,8 @@ flowchart TD
 **跨源 / 桌面端接入**（前端独立域静态部署、或 Tauri 包装消费本 API 时；架构见 [architecture-split.md](./architecture-split.md)、桌面打包见 [desktop.md](./desktop.md)）。线上配置顺序：
 
 1. Pages 环境变量加 `CORS_ORIGINS`（Production，逗号分隔）：跨源 Web 填前端域（如 `https://app.example.com`）；桌面端按目标平台加 `http://tauri.localhost`（Windows WebView2）与 `tauri://localhost`（macOS/Linux WebKitGTK）。保存即生效（每请求解析，无需重新部署代码）。
-2. **R2 桶 CORS 追加同一批 origin**（运维动作，缺一则桌面/跨源直传与直连失败）：AllowedOrigins 加前端域与两个 tauri origin（R2 接受任意 origin 字符串，含自定义协议）；同时核对 AllowedMethods 须含 `PUT`（上传预签名直传）与 `GET`（下载直连）；AllowedHeaders 无需新增（直传链路不带自定义 header，`x-hs-gate` 只发给 API 域）。
-3. 前端侧零配置文件：用户在应用内「连接设置」（顶栏齿轮）填 API 地址，门启用时再输站点密码（桌面首启有引导遮罩，token 落 localStorage）。
+2. **R2 桶 CORS 追加同一批 origin**（运维动作，缺一则桌面/跨源直传与直连失败）：AllowedOrigins 加前端域与两个 tauri origin（R2 接受任意 origin 字符串，含自定义协议）；同时核对 AllowedMethods 须含 `PUT`（上传预签名直传）与 `GET`（下载直连）；AllowedHeaders 无需新增（直传链路不带自定义 header，`x-hs-gate` / `x-hs-session` 只发给 API 域）。
+3. 前端侧零配置文件：用户在应用内「连接设置」（顶栏齿轮）填 API 地址，门启用时再输站点密码（桌面首启有引导遮罩，token 落 localStorage）。**登录**（跨源 Web / 桌面同轨）：OAuth 回调 302 回前端域时附 `?hs_code=`（60s 短时效交付码），落地页自动 `POST /api/auth/exchange` 换发会话 token 存 localStorage、此后经 `x-hs-session` 头携带——桌面 WebView 不依赖第三方 cookie；同源 Web 仍纯 cookie 轨，行为不变。
 4. 按「六、部署后验证」的跨源验证项核对；桌面实机另过 desktop.md 五节核查清单。
 
 撤销跨源能力 = 删 `CORS_ORIGINS` 变量（立即回到同源现状，无任何 CORS 头；已连接的跨源/桌面前端会失去 API 访问，属预期）。
@@ -103,8 +103,9 @@ flowchart TD
 | 浏览器整页流程 | 目录树加载、试听播放、单文件/整包下载 |
 | 配置了上传变量时 | 登录跳转 osu! OAuth 回调正常、上传对话框可用 |
 | 配置了 `CORS_ORIGINS` 时：`curl -s -i -H 'Origin: <白名单 origin>' https://<API域>/api/config` | 200，响应含 `Access-Control-Allow-Origin: <origin>`（回显原值而非 `*`）与 `Vary: Origin` |
-| 白名单 origin 的 `OPTIONS /api/tree`（无凭证） | 204 预检放行（`Allow-Methods` / `Allow-Headers: Content-Type, x-hs-gate` / `Max-Age` 全套）；非白名单 origin 不带 CORS 头 |
-| 跨源浏览器实机（Chromium/Firefox） | 连接设置配 API 地址后：门解锁 token 入效（reload 后 `gate.locked=false`）、树加载、试听 206、单文件/整包下载；跨源登录全流（Safari 不支持，ITP 拦第三方 cookie） |
+| 白名单 origin 的 `OPTIONS /api/tree`（无凭证） | 204 预检放行（`Allow-Methods` / `Allow-Headers: Content-Type, x-hs-gate, x-hs-session` / `Max-Age` 全套）；非白名单 origin 不带 CORS 头 |
+| 跨源浏览器实机（Chromium/Firefox） | 连接设置配 API 地址后：门解锁 token 入效（reload 后 `gate.locked=false`）、树加载、试听 206、单文件/整包下载；跨源登录全流（回调 302 落 `/?hs_code=…` → 顶栏出现用户名；Safari 不支持，ITP 拦第三方 cookie） |
+| 桌面/跨源会话头轨：`curl -s -H 'Origin: <白名单 origin>' -H 'x-hs-gate: <门token>' -H 'x-hs-session: <会话签名值>' https://<API域>/api/auth/me` | 200 `loggedIn:true`（`x-hs-session` 携带与 cookie 同构的签名值即视为登录；值可由登录流程交换所得，或以 `SESSION_SECRET` 手造冒烟） |
 
 ## 七、本地验证环境（改 API 层后实测用）
 
