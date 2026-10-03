@@ -12,6 +12,8 @@ export interface Secrets {
 	OSU_REDIRECT_URI: string;
 	/** 可选：站点访问密码门的初始密码（管理员改密后落 D1 settings，此变量不再生效；缺省 = 门未启用） */
 	SITE_DEFAULT_PASSWORD: string;
+	/** 可选：跨源 CORS 白名单，逗号分隔的绝对 origin（如 https://app.example.com）；缺省 = 不启用 CORS */
+	CORS_ORIGINS: string;
 }
 
 export type SecretsKey = keyof Secrets;
@@ -33,7 +35,8 @@ export function getSecrets(platform: App.Platform | undefined): Partial<Secrets>
 		R2_SECRET_ACCESS_KEY: pick('R2_SECRET_ACCESS_KEY'),
 		R2_ACCOUNT_ID: pick('R2_ACCOUNT_ID'),
 		OSU_REDIRECT_URI: pick('OSU_REDIRECT_URI'),
-		SITE_DEFAULT_PASSWORD: pick('SITE_DEFAULT_PASSWORD')
+		SITE_DEFAULT_PASSWORD: pick('SITE_DEFAULT_PASSWORD'),
+		CORS_ORIGINS: pick('CORS_ORIGINS')
 	};
 }
 

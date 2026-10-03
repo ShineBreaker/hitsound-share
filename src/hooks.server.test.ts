@@ -1,8 +1,10 @@
-// hooks.server 统一拦截：门启用且未解锁 → 401 site_locked；白名单、非 API 路径、门未启用放行
+// hooks.server 统一拦截：门启用且未解锁 → 401 site_locked；白名单、非 API 路径、门未启用放行；
+// CORS_ORIGINS 白名单命中 → OPTIONS 预检 204 / 响应（含门 401 拒绝）注入 Access-Control-* 头
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTestD1, type TestD1 } from './test/d1-sqlite';
 import { createMemoryR2, type MemoryR2 } from './test/r2-memory';
 import { handle } from './hooks.server';
+import { withCorsHeaders } from './lib/server/cors';
 import {
 	GATE_COOKIE,
 	issueUnlockValue,
@@ -11,6 +13,7 @@ import {
 } from './lib/server/site-gate';
 
 const INIT_PW = 'init-pass-1';
+const CORS_ORIGIN = 'https://app.example.com';
 
 let d1: TestD1;
 let r2: MemoryR2;
@@ -24,6 +27,12 @@ interface CallOpts {
 	cookie?: string;
 	/** 模拟环境变量 SITE_DEFAULT_PASSWORD；undefined = 未配置（门未启用） */
 	defaultPw?: string;
+	/** 模拟环境变量 CORS_ORIGINS（逗号分隔 origin 白名单）；undefined = 未配置（不启用 CORS） */
+	corsOrigins?: string;
+	/** 请求方法（默认 GET） */
+	method?: string;
+	/** 请求 Origin 头 */
+	origin?: string;
 	withBindings?: boolean; // 默认 true
 }
 
@@ -32,12 +41,17 @@ async function call(path: string, opts: CallOpts = {}): Promise<Response> {
 	return handle({
 		event: {
 			url: new URL(`https://t.local${path}`),
+			request: new Request(`https://t.local${path}`, {
+				method: opts.method ?? 'GET',
+				headers: opts.origin ? { origin: opts.origin } : undefined
+			}),
 			platform: withBindings
 				? ({
 						env: {
 							DB: d1.db,
 							HITSOUND_FILES: r2.bucket,
-							SITE_DEFAULT_PASSWORD: opts.defaultPw
+							SITE_DEFAULT_PASSWORD: opts.defaultPw,
+							CORS_ORIGINS: opts.corsOrigins
 						}
 					} as never)
 				: undefined,
@@ -104,5 +118,119 @@ describe('站点密码门拦截', () => {
 		expect((await call('/api/tree', { defaultPw: INIT_PW, cookie: old })).status).toBe(200);
 		await setGatePassword(d1.db, 'rotated-pass');
 		expect((await call('/api/tree', { defaultPw: INIT_PW, cookie: old })).status).toBe(401);
+	});
+});
+
+describe('CORS 跨源白名单', () => {
+	it('未配白名单：带 Origin 头的请求也不注入任何 Access-Control 头（零行为变化）', async () => {
+		for (const res of [
+			await call('/api/tree', {
+				defaultPw: INIT_PW,
+				cookie: await unlockCookie(),
+				origin: CORS_ORIGIN
+			}), // 放行路径
+			await call('/api/tree', { defaultPw: INIT_PW, origin: CORS_ORIGIN }) // 门 401 路径
+		]) {
+			expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
+		}
+	});
+
+	it('OPTIONS + 白名单 origin → 204 全套预检头（门启用未解锁也放行：预检先于门判定）', async () => {
+		const res = await call('/api/tree', {
+			method: 'OPTIONS',
+			defaultPw: INIT_PW,
+			corsOrigins: CORS_ORIGIN,
+			origin: CORS_ORIGIN
+		});
+		expect(res.status).toBe(204);
+		expect(res.headers.get('Access-Control-Allow-Origin')).toBe(CORS_ORIGIN);
+		expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+		expect(res.headers.get('Access-Control-Allow-Methods')).toBe(
+			'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+		);
+		expect(res.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type, x-hs-gate');
+		expect(res.headers.get('Access-Control-Max-Age')).toBe('86400');
+	});
+
+	it('OPTIONS 预检在 GATE_ALLOWED 早退之前：/api/config 的 OPTIONS 同样 204（而非落到端点）', async () => {
+		const res = await call('/api/config', {
+			method: 'OPTIONS',
+			defaultPw: INIT_PW,
+			corsOrigins: CORS_ORIGIN,
+			origin: CORS_ORIGIN
+		});
+		expect(res.status).toBe(204);
+		expect(res.headers.get('Access-Control-Allow-Origin')).toBe(CORS_ORIGIN);
+	});
+
+	it('非白名单 origin 的 OPTIONS → 不放行：落门 401 site_locked 且无 CORS 头', async () => {
+		const res = await call('/api/tree', {
+			method: 'OPTIONS',
+			defaultPw: INIT_PW,
+			corsOrigins: CORS_ORIGIN,
+			origin: 'https://evil.example.com'
+		});
+		expect(res.status).toBe(401);
+		expect(((await res.json()) as { error: string }).error).toBe('site_locked');
+		expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
+	});
+
+	it('GET 命中：Allow-Origin 回显请求值 + Allow-Credentials + Vary: Origin', async () => {
+		const res = await call('/api/tree', {
+			defaultPw: INIT_PW,
+			cookie: await unlockCookie(),
+			corsOrigins: CORS_ORIGIN,
+			origin: CORS_ORIGIN
+		});
+		expect(res.status).toBe(200);
+		expect(res.headers.get('Access-Control-Allow-Origin')).toBe(CORS_ORIGIN);
+		expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+		expect(res.headers.get('Vary')).toBe('Origin');
+	});
+
+	it('门 401 拒绝响应同样带 CORS 头（跨源 fetch 错误码可读而非 TypeError）', async () => {
+		const res = await call('/api/tree', {
+			defaultPw: INIT_PW,
+			corsOrigins: CORS_ORIGIN,
+			origin: CORS_ORIGIN
+		});
+		expect(res.status).toBe(401);
+		expect(((await res.json()) as { error: string }).error).toBe('site_locked');
+		expect(res.headers.get('Access-Control-Allow-Origin')).toBe(CORS_ORIGIN);
+	});
+
+	it('白名单比较大小写不敏感：配置大写、请求小写仍命中，回显请求原值', async () => {
+		const res = await call('/api/tree', {
+			defaultPw: INIT_PW,
+			corsOrigins: 'https://APP.example.com',
+			origin: CORS_ORIGIN
+		});
+		expect(res.status).toBe(401); // 门拒绝，借 Allow-Origin 断言命中
+		expect(res.headers.get('Access-Control-Allow-Origin')).toBe(CORS_ORIGIN);
+	});
+
+	it('withCorsHeaders：已有 Vary 则追加而非覆盖', () => {
+		const res = new Response('ok', { headers: { vary: 'Accept-Encoding' } });
+		expect(withCorsHeaders(res, CORS_ORIGIN).headers.get('vary')).toBe('Accept-Encoding, Origin');
+	});
+
+	it('无 Origin 头的请求不读 platform.env（prerender 场景：adapter-cloudflare 禁读 bindings）', async () => {
+		// 复刻 adapter-cloudflare 对 prerenderable route 的行为：platform.env 任何属性读取即抛错
+		const res = await handle({
+			event: {
+				url: new URL('https://t.local/'),
+				request: new Request('https://t.local/'),
+				platform: {
+					env: new Proxy(
+						{},
+						{ get() { throw new Error('Cannot access platform.env in a prerenderable route'); } }
+					)
+				} as never,
+				cookies: { get: () => undefined } as never
+			} as never,
+			resolve: async () => new Response('ok')
+		});
+		expect(res.status).toBe(200);
+		expect(await res.text()).toBe('ok');
 	});
 });

@@ -46,9 +46,12 @@ flowchart TD
 | `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | ✅（上传链路） | R2 API Token 三件套，用于预签名直传/直连 |
 | `ADMIN_OSU_ID` | 建议 | 唯一超级管理员（部署即固定）；不配则无人能维护管理员名单 |
 | `SITE_DEFAULT_PASSWORD` | 可选 | **站点访问密码门**的初始密码。配置即启用；值只存在 Pages 变量里，**不要写进仓库任何文件** |
+| `CORS_ORIGINS` | 可选 | **跨源 CORS 白名单**：逗号分隔的绝对 origin（如 `https://app.example.com,http://tauri.localhost`）。配置后 hooks 对白名单 origin 的请求注入 `Access-Control-*` 响应头并放行 `OPTIONS` 预检（站点门 401 拒绝也带头，错误码跨源可读）；不配 = 同源现状，无任何 CORS 头 |
 | `OSU_REDIRECT_URI` | 可选 | 显式 OAuth 回调地址，一般不用配 |
 
 **降级行为（设计如此，非故障）**：上传链路 6 个必需变量任一缺失 → `/api/config` 返回 `uploadEnabled=false` → 前端隐藏登录/上传入口，浏览/试听/下载不受影响。站点访问门未启用（无 `SITE_DEFAULT_PASSWORD` 且 D1 `settings` 无记录）→ 全站不拦。
+
+**跨源排障**：前端部署在其他域名 / 桌面端包装连不上 API（症状：请求 TypeError、空数据重试 UI）→ 先查 `CORS_ORIGINS` 是否包含前端 origin（scheme/host/port 须与浏览器地址栏完全一致）；R2 直传/直连另需 R2 桶 CORS 放行该 origin（见「一、首次部署」第 2 步）。
 
 ## 三、schema 版本与升级
 
