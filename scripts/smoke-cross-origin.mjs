@@ -7,9 +7,11 @@
 //   mktemp 工作目录 → 生成种子 WAV（真实 sha256，与 R2 key / D1 行对齐）→ 起后端
 //   （假密钥 + SITE_DEFAULT_PASSWORD + CORS_ORIGINS；**不传 R2 三项**——传了则 zip
 //   清单走预签名指向不存在的 R2 域，缺省才强制 /api/blob 绝对回退分支，副作用
-//   uploadEnabled=false 恰好验证连接齿轮无条件显示）→ 播种 schema + fixture + R2
+//   uploadEnabled=false 恰好验证连接设置与上传能力正交）→ 播种 schema + fixture + R2
 //   对象 + SELECT COUNT 验证（d1 execute 假失败坑）→ 起静态前端 → CDP 消息级断言
-//   （复用 smoke-osucad-preview 骨架）→ 收尾杀全部子进程。
+//   （复用 smoke-osucad-preview 骨架；首幕经 addScriptToEvaluateOnNewDocument 注入
+//   __TAURI_INTERNALS__ 仿真桌面形态——bb0c64a 起齿轮按「桌面或已配地址」显隐，网页
+//   形态首载无 base 不渲染齿轮，「从零配地址」正是桌面首启的产品场景）→ 收尾杀全部子进程。
 // 用法：node scripts/smoke-cross-origin.mjs [--keep-servers]
 //   --keep-servers：跑完不杀进程不清理，打印端口 / 播种 hash / 状态目录供人工调试。
 // 前置：just build build-static（just smoke-cross-origin 已含依赖）。
@@ -234,7 +236,7 @@ launch(
 		'-b', `SITE_DEFAULT_PASSWORD=${PASSWORD}`,
 		'-b', `CORS_ORIGINS=http://127.0.0.1:${FRONT_PORT}`
 		// 故意不传 R2 三项：强制 zip 清单 /api/blob 绝对回退分支（预签名会指向不存在的 R2 域），
-		// 且 uploadEnabled=false 恰好覆盖「连接齿轮无条件显示」
+		// 且 uploadEnabled=false 恰好验证连接设置与上传能力正交（桌面首启齿轮不受影响）
 	]
 );
 await waitUrl(`${API}/`, 90_000, 'wrangler pages dev 后端', 'backend');
@@ -371,7 +373,7 @@ const click = (expr) => evalJs(`${expr}; true`);
 await send('Page.enable');
 await send('Runtime.enable');
 await send('Network.enable');
-	await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+await send('Page.addScriptToEvaluateOnNewDocument', { source: `
 	// headless 下 showSaveFilePicker 存在但永不 resolve（AGENTS 已知坑⑧）：置 undefined
 	// 强制整包下载走 Blob 兜底（注入模式与 smoke-osucad 一致）
 	try { window.showSaveFilePicker = undefined; } catch {}
@@ -385,22 +387,41 @@ await send('Network.enable');
 	window.addEventListener("unhandledrejection", e => window.__errs.push(String(e.reason)));
 	try { localStorage.setItem("hs_tour_v1", "1"); } catch {} // 关新手引导（pageReady 后会盖住 UI）
 ` });
+// 桌面形态仿真：__TAURI_INTERNALS__ 必须先于应用模块求值存在（isDesktopApp 是求值期
+// 纯属性检测，加载后 Runtime.evaluate 补写为时已晚），addScriptToEvaluateOnNewDocument
+// 恰好在文档创建时、任何页面脚本之前运行。独立注册——首启两幕完成后移除，后续
+// 「失效 token / 清空 base」幕按网页形态 reload（桌面形态下清空 base 会复现首启遮罩，
+// 与原「同源空壳无门遮罩」语义冲突；见 +layout.svelte 的 desktopSetup 遮罩分支）
+const desktopMark = await send('Page.addScriptToEvaluateOnNewDocument', {
+	source: 'window.__TAURI_INTERNALS__ = {};'
+});
+const DESKTOP_MARK = desktopMark.result?.identifier;
+if (!DESKTOP_MARK) fail('addScriptToEvaluateOnNewDocument 未返回 identifier（chromium 行为变化？）');
 
 // ── 6. 断言序列 ─────────────────────────────────────────────
 try {
-	// 首启：非 Tauri（桌面引导遮罩不触发）+ uploadEnabled=false 下连接齿轮仍可见可开
+	// 首幕：桌面形态首启（__TAURI_INTERNALS__ 于文档创建时注入，先于模块求值）。
+	// bb0c64a 起齿轮按「桌面模式或已配置地址」显隐（api-base.svelte.ts showConnectionEntry），
+	// 网页形态首载无 base 不渲染齿轮——「从零配地址」的产品原型正是桌面首启：
+	// 引导遮罩（needsDesktopSetup）→ 连接设置 → 错/对密码
 	await send('Page.navigate', { url: FRONT });
-	await waitFor(`!!document.querySelector('.gear-btn')`, 15_000, '首屏渲染（顶栏齿轮）');
-	// 预渲染 shell 的齿轮是静态 DOM，水合前点击无效——以 config 拉取（layout onMount）为水合信号
+	await waitFor(`!!document.querySelector('.help-btn')`, 15_000, '首屏渲染（顶栏 shell）');
+	// 齿轮与首启遮罩都不在预渲染 HTML 里（构建期两判定均 false），水合后才挂载——
+	// 以 config 拉取（layout onMount）为水合信号再点击
 	await waitNet((e) => e.url.includes('/api/config'), 15_000, 'layout 水合（config 拉取）');
-	if (await evalJs(`'__TAURI_INTERNALS__' in window || '__TAURI__' in window`))
-		fail('Tauri 检测误报（headless chromium 不应命中桌面判定）');
-	await waitFor(`!document.querySelector('.gate-mask')`, 5_000, '无桌面首启遮罩（非 Tauri）');
+	if (!(await evalJs(`'__TAURI_INTERNALS__' in window`)))
+		fail('桌面标记未生效：__TAURI_INTERNALS__ 不在 window（文档创建期注入失效？）');
+	await waitFor(`!!document.querySelector('.gear-btn')`, 10_000, '桌面模式齿轮可见（showConnectionEntry：桌面必显）');
 	if (await evalJs(`!!document.querySelector('[data-tour="upload"]')`))
 		fail('uploadEnabled=false 下上传按钮不应显示（R2 三项缺失的副作用验证）');
-	await click(`document.querySelector('.gear-btn').click()`);
-	await waitFor(`!!document.querySelector('#conn-base')`, 5_000, '连接设置对话框可打开');
-	step('首启：齿轮在 uploadEnabled=false 下可见可开，无桌面误报');
+	// 桌面首启引导遮罩（needsDesktopSetup = Tauri 且未配 base）——文案与 SiteGate 区分
+	await waitFor(`!!document.querySelector('.gate-mask')`, 5_000, '桌面首启引导遮罩出现');
+	const maskH1 = await evalJs(`document.querySelector('.gate-mask .gate-card h1')?.textContent ?? ''`);
+	if (!maskH1.includes('请先配置服务器地址')) fail(`首启遮罩文案不符（应为桌面引导而非站点门）：${maskH1}`);
+	// 真实首启交互：点引导遮罩上的「连接设置」按钮开对话框（遮罩让位 showConn，+layout.svelte）
+	await click(`document.querySelector('.gate-mask .btn.primary').click()`);
+	await waitFor(`!!document.querySelector('#conn-base')`, 5_000, '连接设置对话框可开（首启引导入口）');
+	step('桌面首启：引导遮罩出现，遮罩按钮打开连接设置，齿轮桌面模式可见');
 
 	// 配置：先错密码回显 wrong_password，再正确密码 → token 入 localStorage → reload
 	await setInput('#conn-base', API);
@@ -429,6 +450,12 @@ try {
 	await waitNet((e) => e.url.startsWith(`${API}/api/config`), 10_000, 'reload 后 config 拉取', netMark);
 	await waitFor(`!document.querySelector('.gate-mask')`, 10_000, '解锁后 config gate.locked=false（无遮罩）');
 	step(`连接配置：错密码回显 → 正确密码解锁 → token 入 localStorage（${token.slice(0, 8)}…）`);
+
+	// 保存 reload 后已配 base：齿轮入口保留（showConnectionEntry 第二支），可开可关
+	await click(`document.querySelector('.gear-btn').click()`);
+	await waitFor(`!!document.querySelector('#conn-base')`, 5_000, '顶栏齿轮打开连接设置');
+	await evalJs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); true`);
+	await waitFor(`!document.querySelector('.dialog-mask')`, 5_000, 'Esc 关闭连接设置');
 
 	// 树 + 文件表（播种数据可见——数据类断言不可砍）
 	await waitFor(`[...document.querySelectorAll('.tree .label')].some(el => el.textContent.includes('冒烟包'))`, 15_000, '树中出现播种包「冒烟包」');
@@ -515,6 +542,10 @@ try {
 	if (opt.status !== 204 || acao !== `http://127.0.0.1:${FRONT_PORT}`)
 		fail(`OPTIONS 预检异常：status=${opt.status} acao=${acao}`);
 	step('CORS 预检：OPTIONS /api/tree → 204 + origin 回显');
+
+	// 桌面仿真只服务首启两幕：移除后 reload 回网页形态——「失效 token」「清空 base」幕
+	// 的遮罩语义按原样成立（桌面形态下清空 base 会复现首启遮罩，语义不同）
+	await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: DESKTOP_MARK });
 
 	// 失效 token：门 401 响应跨源可读（CORS 注入到拒绝分支，而非浏览器 TypeError）
 	await evalJs(`localStorage.setItem('hs_gate_token', 'deadbeefdeadbeef.deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead'); location.reload(); true`);
