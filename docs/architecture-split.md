@@ -1,0 +1,117 @@
+# 前后端分离架构（跨源 Web / Tauri 桌面 × Pages API）
+
+> 前端可脱离同源后端独立运行：跨源静态部署、Tauri 包装成桌面端，都消费同一个 Pages Functions 后端。
+> 本文是分离形态的架构总览与排障入口；桌面打包细节见 [desktop.md](./desktop.md)，运维配置见 [deployment.md](./deployment.md) 二节。
+> 硬约束：**Pages Git 集成构建命令保持 `pnpm build`、schema.sql 零变更、不物理拆仓**——线上同源版部署零改动，分离是纯增量能力。
+
+## 一、目标架构
+
+同一份前端代码，三种形态：
+
+```mermaid
+flowchart LR
+  subgraph 前端形态["前端（同一份代码，base 可配）"]
+    A["同源 Web（现状）<br/>base='' 相对路径 + cookie"]
+    B["跨源 Web（独立域静态部署）<br/>base=API域 + token/cookie 双轨"]
+    C["Tauri 桌面<br/>build-static 产物 + token"]
+  end
+  subgraph 后端["后端（Pages Functions，部署不动）"]
+    H["hooks.server.ts<br/>① OPTIONS 预检 204（白名单 origin）<br/>② 站点门：cookie / x-hs-gate / ?hs_gate=<br/>③ 响应注入 CORS 头 + Vary: Origin"]
+    R["/api/* 与 /f/* 端点<br/>（业务逻辑零改动）"]
+  end
+  D1[("D1")]
+  R2[("R2 桶")]
+  A --> H
+  B -->|apiFetch| H
+  C -->|apiFetch| H
+  H --> R
+  R --> D1
+  R --> R2
+  B -. 预签名直传 PUT / 直连 GET（需 R2 CORS 放行该域） .-> R2
+  C -. 预签名直连 GET（需 R2 CORS 放行 tauri origin） .-> R2
+```
+
+后端改动面收敛在：hooks（CORS + 门凭证）、两个门签发端点（token 下发）、OAuth 两端点（跨源参数）、zip 清单一处 URL 拼法。全部端点业务语义、D1/R2 用法、子请求预算不变。
+
+| 形态 | 连接配置 | 门凭证 | 登录/上传 |
+| --- | --- | --- | --- |
+| 同源 Web（现状） | 无（base=''） | `hs_gate` cookie | ✅ cookie（Lax） |
+| 跨源 Web（https） | 齿轮填 API 域 | cookie(None) + token 双轨 | ✅（SameSite=None + credentials include；Safari 不可用，见「六」） |
+| Tauri 桌面 | 首启引导必填 | token（`x-hs-gate` 头 + `/f/` query） | ❌ 入口自动隐藏（见「四」） |
+
+## 二、API 客户端层（`src/lib/api-base.svelte.ts`）
+
+全站**唯一**知道「服务器地址可配置」的模块；`api.ts` 与全部组件反向依赖它，模块自身不 import 业务模块（避免环）。状态存 localStorage：`hs_api_base`（base，空 = 同源）、`hs_gate_token`（门 token），Svelte 5 `$state` 整值赋值。
+
+| 出口 | 语义 |
+| --- | --- |
+| `apiFetch(input, init)` | 统一 fetch 出口。绝对 http(s) URL（R2 预签名）→ 裸 fetch（不加 header/credentials——预签名只签了既定 headers，附加 `x-hs-gate` 会签名失配）；相对路径 → 拼 base（空则原样）+ 有 token 注入 `x-hs-gate` + credentials `base ? 'include' : 'same-origin'`（base 空与 fetch 默认一致，同源零回归）。`cache:'reload'` 等 init 透传 |
+| `absoluteApiUrl(path, withGate?)` | 给 Audio.src / 整页导航（带不了 header 的场合）构造完整 URL；有 token 且 path 以 `/f/` 前缀（或显式 `withGate=true`，登录链接用）时追加 `?hs_gate=<token>` |
+| `fetchIssuedUrl(url, init)` | 服务端下发 URL（zip 清单 `urls` 值）三支分派：① 相对路径（旧后端形态）→ apiFetch；② 绝对 URL 且 origin === API base（新后端的 `/api/blob` 绝对回退 URL，受门保护）→ 剥 base 走 apiFetch（裸 fetch 会被门 401）；③ 其余绝对 URL（R2 预签名域）→ 裸 fetch |
+| `loginUrl()` | 登录整页导航 URL：base + `/api/auth/login` + query（token 存在时 `hs_gate`、base 非空时 `hs_origin=<location.origin>`）。URLSearchParams 组装——无 token 时手拼 `'&'` 会产出坏 URL |
+| `getApiBase` / `setApiBase` / `clearConnection` / `getGateToken` / `setGateToken` | 连接状态读写；`setApiBase` 规范化（trim、去尾 `/`、必须 http(s)），非法 throw `bad_url` |
+| `isDesktopApp()` / `needsDesktopSetup()` | Tauri WebView 检测（`__TAURI_INTERNALS__` / `__TAURI__` 全局标记，纯检测零网络）；后者 = 桌面且未配 base（首启引导） |
+
+**连接设置 UI**（`src/lib/components/ConnectionSettings.svelte`，顶栏齿轮入口）：字段 = 服务器地址（留空 = 同源当前站点）+ 站点密码（`config.gate.locked` 时亮出）；「测试并保存」= setApiBase → fetchConfig →（locked 则 unlockSite）成功后整页 reload（换源后整树状态重建）；失败回显原因（`bad_url` / 不可达 / `wrong_password`）**并回滚连接改动**，不留半套状态打死地址。齿轮无条件显示——连接配置与上传能力正交，`uploadEnabled=false` 时跨源/桌面用户恰恰最需要它（`src/routes/+layout.svelte` 顶栏 actions 区）。桌面首启：`needsDesktopSetup()` 时显示引导遮罩，点击打开连接设置。
+
+## 三、鉴权
+
+### 3.1 站点门：cookie + token 双轨
+
+token 与 cookie 值**完全同构**（同为 `issueUnlockValue` 的产物 `<hash前16>.<HMAC>`，`src/lib/server/site-gate.ts`），验签复用 `verifyUnlockValue`——改密即全废的语义自动继承，无新签名结构。
+
+```mermaid
+sequenceDiagram
+  participant F as 前端（跨源 Web / Tauri）
+  participant A as API（Pages Functions）
+  F->>A: GET /api/config（Origin ∈ CORS_ORIGINS；门白名单路径）
+  A-->>F: { gate: { locked: true }, ... }（含 CORS 头）
+  F->>A: POST /api/site-gate {password}
+  A-->>F: { ok: true, token } + Set-Cookie hs_gate（跨源签 SameSite=None 双轨）
+  F->>F: localStorage['hs_gate_token'] = token
+  F->>A: GET /api/tree（header x-hs-gate；fetch 类调用）
+  A-->>F: 200 树数据
+  F->>A: GET /f/<id>?hs_gate=<token>（Audio.src / 下载导航，带不了 header）
+  A-->>F: 206 Range 音频流
+```
+
+- **三源凭证**：`pickGateCredential`（cookie ?? `x-hs-gate` 头 ?? `?hs_gate=` query，cookie 优先）——同源 Web 行为与纯 cookie 时代逐字节一致。**两处消费缺一不可**：hooks 门判定（`src/hooks.server.ts`）与 `/api/config` 的 `gate.locked`（后者在门白名单内自行验凭证，不接入则桌面解锁存 token 后 reload 仍 `locked:true`，遮罩死循环）。
+- **签发端点**：`POST /api/site-gate`（解锁）与 `PUT /api/admin/site-gate`（管理员改密）响应体都带 `token`；前端 `unlockSite` 见 token 即存（旧后端无该字段则忽略，cookie 语义照旧）。
+- **子请求预算**：三源合并不加 DB 查询（仍 1 条 settings 主键 SELECT）。
+- **泄露面**：token 是 HMAC 派生值非密码明文，30 天有效、改密全废；`?hs_gate=` 会进访问日志——与站点门（软门）威胁模型相称。
+
+### 3.2 OAuth 跨源（仅跨源 https Web；桌面不走此流）
+
+`loginUrl()` 带 `hs_origin=<前端域>` → login 端点 `pickClientOrigin`（query 优先、Origin 头兜底，均须 ∈ 白名单）把 origin 编进 state 尾段（`<randomHex(16)>.<b64url(origin)>`）→ callback 比对 state 后解尾段，命中白名单则 session cookie 签 `SameSite=None` 并 302 回 `<前端域>/`。query 与 Origin 头均未命中（如直接打开 API 域登录地址）→ 走同源现状流（lax + 302 `/`），非错误。伪造 state 尾段 / 非白名单域按无尾段处理，拿不到 None 会话与外域跳转。`redirect_uri` 推导不变（请求打到 API 域即 API 域），**osu! 应用注册无需改动**。
+
+cookie SameSite 统一口径：`hs_session` / `hs_gate` / `hs_oauth_state` 三枚，各自签发端点判定跨源白名单命中时签 `none`（其余属性不变），未命中维持 `lax` 现状。
+
+### 3.3 桌面端边界
+
+桌面**不支持 OAuth 登录/上传/改名/删除/管理**，相关入口经 `isDesktopApp()` 隐藏、`fetchMe` 恒 `loggedIn:false`：WebView 对自定义协议 origin（`tauri://localhost` / `http://tauri.localhost`）的第三方 cookie 不可靠，且 osu! OAuth 回调要求 https 注册地址。未来若做桌面登录，方向是 token 型会话，另行提案。浏览/试听/波形/组装/osz 导出/下载均可用；整包下载落盘强制走 Blob 兜底（`zip-save` 在桌面模式跳过 `showSaveFilePicker`——其「存在但永不 resolve」会永久 pending），实机核查项见 desktop.md 五节。
+
+## 四、CORS 设计
+
+- **白名单**：环境变量 `CORS_ORIGINS`（逗号分隔绝对 origin，如 `https://app.example.com,http://tauri.localhost`），经 `getSecrets` 读取、每请求解析不缓存；未配置 = 空 = 不启用，零行为变化。实现：`src/lib/server/cors.ts`。
+- **hooks 挂载顺序**（`src/hooks.server.ts`）：① OPTIONS 预检 204 在门判定与白名单早退**之前**（门白名单端点自身不答 OPTIONS 落 405，且预检不带 cookie 过不了门）；② 白名单命中才注入响应头——包括门 401 拒绝（否则跨源收 401 被浏览器吞成 TypeError，错误码不可读）；③ 每个带 CORS 头的响应追加 `Vary: Origin`（防共享缓存串 origin）。仅请求带 Origin 头才读 platform.env（prerenderable route 读 bindings 会被 adapter-cloudflare 抛错）。
+- **头清单**：`Allow-Origin` 回显具体 origin（**绝不 `*`**——credentials 模式下无效且不安全）、`Allow-Credentials: true`、`Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS`、`Allow-Headers: Content-Type, x-hs-gate`、`Max-Age: 86400`。
+- **R2 直连另算**：预签名 PUT/GET 走 R2 桶自己的 CORS（后端白名单管不到），运维见 deployment.md。
+
+## 五、静态构建通道
+
+`just build-static`（= `pnpm build` 后 `node scripts/build-static.mjs`，等价 `pnpm build:static`）→ `build-static/`（已 gitignore）。**不引入 adapter-static**：唯一页面 `/` 已 prerender，预渲染 shell + `_app` + `osucad` 资产本就在 `.svelte-kit/cloudflare` 产物里，抽取方案零构建配置改动、单一产物源。
+
+- 排除 Pages 专用文件：`_worker.js` / `_routes.json` / `_headers`（+ 防御性排除 `output/` / `cloudflare-tmp/`）。
+- **CSP 放宽后处理（仅 index.html）**：`connect-src 'self' https: blob:`（API 域 + R2 域 + 回退，scheme-source 免枚举）、`media-src` 加 `https: data:`、追加 `img-src 'self' https: data:`；script-src 水合 hash **原样保留**（防篡改核心不动）。精确字符串匹配、miss 即构建失败——`svelte.config.js` 的 CSP 变更后须同步更新 `scripts/build-static.mjs` 替换串。
+- 同源 Web 版 CSP（`svelte.config.js`）**不动**：同源下 `'self'` 依旧正确；三层各自归属——同源走 svelte.config.js、静态版走 build-static 后处理、Tauri 版走 tauri.conf.json 接管。
+- **只能部署在域根路径**：硬约束是 osucad 预览 iframe 的根绝对 src `"/osucad/index.html"`（`CadPreview.svelte`），子路径部署会 404 断 cad 预览；`_app`（`./` 相对）与 wasm（`import.meta.url` 相对）本可子路径工作。解法是改 iframe src 为相对引用（未做）。
+- 本地联调：`just serve-static` 起 :8798（绑定 127.0.0.1 与后端 localhost 形成真实跨站）。
+
+## 六、测试与已知边界
+
+- 单测：`src/lib/api-base.test.ts`（URL 构造 / header / credentials / 三支分派 / loginUrl 形态）、`src/hooks.server.test.ts`（CORS 头、预检、三源凭证、门 401 带头、子请求计数）、auth login/callback、site-gate、config、zip 回退 URL。
+- 冒烟两条互补（均托管后端生命周期 + 数据播种，支持 `--keep-servers`）：
+  - `just smoke-cross-origin`：静态产物 :8798 × 后端 :8799，覆盖静态 CSP 通道 + 桌面近似形态（不配 R2 三项强制 `/api/blob` 回退分支）；
+  - `node scripts/smoke-split.mjs`（未入 justfile）：vite dev :5173 × 后端 :8799，覆盖开发期跨域工作流 + 同源回归。
+- **Safari 跨源登录不可用**：ITP 拦第三方 cookie，`SameSite=None` 的 session 不被携带；门 token 不受影响（浏览/下载仍可用）。用 Chromium/Firefox。
+- **排障入口**：连不上 API（TypeError / 空树重试 UI）→ 先查后端 `CORS_ORIGINS`（scheme/host/port 须与地址栏完全一致），再查 R2 CORS；ConnectionSettings 的「测试并保存」会显式报错。

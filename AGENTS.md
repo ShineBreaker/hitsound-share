@@ -12,6 +12,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 - `pnpm dev` / `pnpm build` / `pnpm preview`；`pnpm test`（vitest，`src/**/*.test.ts`）——改动后 `pnpm test` 与 `pnpm build` 都须通过（一条命令：`just verify`）；无 lint 脚本
 - `wrangler d1 execute hitsound-share-db --local --file schema.sql`：初始化本地 D1 模拟库；`--command "SQL"` 单条执行（线上操作用 `--remote`）
 - `just pages-dev`：构建产物起本地 Functions :8799（已内置临时目录+假密钥的安全姿势）；手工等价做法与原因见 `docs/deployment.md` 七节
+- `just build-static` / `just serve-static` / `just smoke-cross-origin`：纯静态产物抽取（Tauri 消费，`pnpm build:static` 等价）/ 本地起静态 :8798 / 跨源端到端冒烟——前后端分离链路见 `docs/architecture-split.md`
 - `wrangler r2 object put/get/list hitsound-files/<key> --local/--remote`：R2 对象操作（不加 `--local` 的默认仍是本地，**线上必须显式 `--remote`**）
 - pnpm 钉在 package.json 的 `packageManager`（12.3.4）；只用 pnpm，不用 npm/yarn 安装依赖
 
@@ -26,20 +27,20 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 
 - 本地：`direnv allow` → `pnpm install` → 初始化本地 D1（见常用命令）→ `pnpm dev` 跑浏览/试听；上传链路需 OAuth 项，留空时登录/上传入口自动隐藏；改 API 层用 `wrangler pages dev` 起产物实测
 - 部署走 Pages Git 集成：推送 main 分支自动构建；**构建命令（`pnpm build`）配置在 Pages 项目构建设置里（面板/API 的 build_config），不在 wrangler.toml**——wrangler.toml 只承载输出目录、compatibility 与 R2/D1 bindings
-- 运行时需在 Pages 配 7 个 Production 加密变量：`OSU_CLIENT_ID`、`OSU_CLIENT_SECRET`、`SESSION_SECRET`、`ADMIN_OSU_ID`、`R2_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`（`SESSION_SECRET` 用 `openssl rand -hex 32` 生成）；可选 `SITE_DEFAULT_PASSWORD`（站点访问密码门初始密码，配置即启用；管理员在线改密后落 D1 settings，此变量不再生效）
+- 运行时需在 Pages 配 7 个 Production 加密变量：`OSU_CLIENT_ID`、`OSU_CLIENT_SECRET`、`SESSION_SECRET`、`ADMIN_OSU_ID`、`R2_ACCOUNT_ID`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`（`SESSION_SECRET` 用 `openssl rand -hex 32` 生成）；可选 `SITE_DEFAULT_PASSWORD`（站点访问密码门初始密码，配置即启用；管理员在线改密后落 D1 settings，此变量不再生效）、`CORS_ORIGINS`（跨源 CORS 白名单，供跨源 Web 前端 / Tauri 桌面消费本 API，见 `docs/architecture-split.md`）
 - osu! OAuth 回调地址：`https://<域名>/api/auth/callback`（默认按请求 origin 推导，`OSU_REDIRECT_URI` 一般不用配）
 - D1 初始化/变更：执行 `schema.sql`，执行后必须 SELECT 验证（见下文已知坑）；线上库 v5→v6 直接执行 `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`（站点访问密码），v3→v4 需先执行 `ALTER TABLE packages ADD COLUMN append_to TEXT;` 再部署代码
 - 存量 original.zip 清理（v4 停传后的一次性动作）：admin 登录后 `POST /api/admin/purge-zips`，重复调用至 `remaining: 0`
 
 ## 目录速览
 
-- `src/lib/server/` — 仅服务端代码：`osu.ts`（唯一出网通道）、`session.ts`（HMAC 签名 cookie）、`guard.ts`（`requireUser`/`requireAdmin`/`requirePackageOwner`/`requireSuperAdmin`，返回 Response 即已作答）、`env.ts`（密钥读取 + `uploadCapable`/`pickR2Secrets` 能力判定）、`admin.ts`（管理员判定：超管 = ADMIN_OSU_ID 环境变量，管理员 = `users.is_admin`，每次实时查库不落 session）、`media.ts`（R2 key/Range/流式代理）、`upload.ts`（manifest 校验/预签名 PUT+GET/魔数）、`ledger.ts`（Blob 账本：refcount 登记/对齐/回收，唯一入口；`releasePackage` 整包、`releaseFiles` 文件/文件夹级删除）、`verify.ts`（done 新 blob 核验）、`packages.ts`（包行查询/pending 懒清理）、`site-gate.ts`（站点访问密码门：密码源 = D1 settings > `SITE_DEFAULT_PASSWORD`，皆无未启用；解锁 cookie 以当前密码 hash 为 HMAC 密钥——改密即全站会话失效）
-- `src/lib/*.ts` — 浏览器端 deep module：`upload-pipeline.ts`（`prepareUpload` 解包（zip/rar/7z，唯一顶层文件夹剥前缀提升）→哈希 + `runUpload` manifest→并发直传→done，事件流上报；`archive.ts` 按魔数分流，rar/7z wasm 按需加载（`unrar-wasm.ts`/`seven-zip-wasm.ts`；7z 退出码不可靠，成败看输出文本与裸数字 throw）、`zip-save.ts`（整包下载/组装面板/osz 导出共用的打包落盘，`ext` 换后缀）、`osz.svelte.ts`（谱面集导入 + 覆盖计划 + 合并打包：根目录音频 stem（小写去后缀）匹配顶替，`packArgs`/`buildBytes` 是 osucad 预览的字节出口）、`player.svelte.ts`（全站唯一播放器，key 前缀分域 file.id / kit: / osz:）、`kit.svelte.ts`（组装面板格子/序号/QWERTY·ASDFGH·ZXCVBN 键位，唯一入口）、`cad.svelte.ts`（osu!cad 实时预览桥：iframe postMessage `hs:*`/`cad:*` + 热更新推送）、`selection.svelte.ts`（文件表选中集 + 入格）、`ui.svelte.ts` + `tour.ts`（帮助/新手引导状态与步骤）、`pool.ts`（并发池）、`api.ts`（含 peaks 合批）
+- `src/lib/server/` — 仅服务端代码：`osu.ts`（唯一出网通道）、`session.ts`（HMAC 签名 cookie）、`guard.ts`（`requireUser`/`requireAdmin`/`requirePackageOwner`/`requireSuperAdmin`，返回 Response 即已作答）、`env.ts`（密钥读取 + `uploadCapable`/`pickR2Secrets` 能力判定）、`admin.ts`（管理员判定：超管 = ADMIN_OSU_ID 环境变量，管理员 = `users.is_admin`，每次实时查库不落 session）、`media.ts`（R2 key/Range/流式代理）、`upload.ts`（manifest 校验/预签名 PUT+GET/魔数）、`ledger.ts`（Blob 账本：refcount 登记/对齐/回收，唯一入口；`releasePackage` 整包、`releaseFiles` 文件/文件夹级删除）、`verify.ts`（done 新 blob 核验）、`packages.ts`（包行查询/pending 懒清理）、`site-gate.ts`（站点访问密码门：密码源 = D1 settings > `SITE_DEFAULT_PASSWORD`，皆无未启用；解锁 cookie 以当前密码 hash 为 HMAC 密钥——改密即全站会话失效）、`cors.ts`（跨源 CORS：`CORS_ORIGINS` 白名单解析 / 预检 204 / 响应头注入，绝不回显 `*`）
+- `src/lib/*.ts` — 浏览器端 deep module：`upload-pipeline.ts`（`prepareUpload` 解包（zip/rar/7z，唯一顶层文件夹剥前缀提升）→哈希 + `runUpload` manifest→并发直传→done，事件流上报；`archive.ts` 按魔数分流，rar/7z wasm 按需加载（`unrar-wasm.ts`/`seven-zip-wasm.ts`；7z 退出码不可靠，成败看输出文本与裸数字 throw）、`zip-save.ts`（整包下载/组装面板/osz 导出共用的打包落盘，`ext` 换后缀）、`osz.svelte.ts`（谱面集导入 + 覆盖计划 + 合并打包：根目录音频 stem（小写去后缀）匹配顶替，`packArgs`/`buildBytes` 是 osucad 预览的字节出口）、`player.svelte.ts`（全站唯一播放器，key 前缀分域 file.id / kit: / osz:）、`kit.svelte.ts`（组装面板格子/序号/QWERTY·ASDFGH·ZXCVBN 键位，唯一入口）、`cad.svelte.ts`（osu!cad 实时预览桥：iframe postMessage `hs:*`/`cad:*` + 热更新推送）、`selection.svelte.ts`（文件表选中集 + 入格）、`ui.svelte.ts` + `tour.ts`（帮助/新手引导状态与步骤）、`pool.ts`（并发池）、`api-base.svelte.ts`（API 客户端层：全站唯一知道「服务器地址可配置」的模块，`apiFetch`/`absoluteApiUrl`/`fetchIssuedUrl`/`loginUrl` + localStorage `hs_api_base`/`hs_gate_token`，前端网络调用一律经它出）、`api.ts`（含 peaks 合批）
 - `src/test/` — 测试 adapter：`d1-sqlite.ts`（node:sqlite 模拟 D1）、`r2-memory.ts`（内存 R2），均带 `calls` 计数用于断言子请求预算
 - `src/routes/api/**` — 全部 API 端点（编译为 Pages Functions）：`upload`（manifest+影子包；单文件 ≤10MB / 每日 5 包 / 全局水位 10GB 三重闸门合一的条件 INSERT，管理员豁免前两项、不豁免水位）、`upload/done`（核验+合并）、`package/[id]`（PATCH 改名，重名且 `merge=true` 时并入最老同名包 / DELETE 整包）、`package/[id]/folder`（PATCH 小类改名 / DELETE 小类删除）、`package/[id]/zip`（整包下载清单）、`files`（GET 列文件 / DELETE 批量删文件，可跨包）、`files/move`（POST 移动文件/小类到另一包/小类：源侧文件级 owner、目标包须自己的包，管理员豁免；见 ADR 0005）、`blob/[hash]/[ext]`（下载回退代理）、`admin/purge-zips`、`admin/admins`（管理员名单，仅超管）、`admin/site-gate`（改站点访问密码，管理员）、`site-gate`（POST 解锁，hooks 白名单）、`config`（上传开关 + 访问门状态 + 限制常量/存储池用量/登录时当日配额，与水位公式同口径）、`tree`/`waveform`/`my`/`auth`
-- `src/hooks.server.ts` — 站点访问密码门统一拦截：`/api/*` 与 `/f/*` 未解锁 401 `site_locked`（白名单 `/api/site-gate`、`/api/config`；门未启用不拦；每请求 1 条 settings 主键 SELECT）；首页 shell 是预渲染静态资产不进 Functions，数据全靠此层保护
+- `src/hooks.server.ts` — 站点访问密码门统一拦截：`/api/*` 与 `/f/*` 未解锁 401 `site_locked`（白名单 `/api/site-gate`、`/api/config`；门未启用不拦；每请求 1 条 settings 主键 SELECT）；兼跨源 CORS 挂载点（OPTIONS 预检 204 在门判定前、三源门凭证、响应注入 CORS 头 + `Vary: Origin`，见 `docs/architecture-split.md`）；首页 shell 是预渲染静态资产不进 Functions，数据全靠此层保护
 - `src/routes/+page.ts` prerender 首页 shell 省 Functions 配额；整包下载由 `+page.svelte` 拉清单后交给 `zip-save.ts`（fflate 流式 STORE）
-- `src/lib/components/` — TreeView（行内改名 + 删除钮，包主/管理员可见）/ FileTable（复选框多选，行可拖入组装面板）/ WaveformCanvas / UploadDialog（新建/附加模式）/ MyPackages / AdminPanel（站点访问密码维护（管理员）+ 超管名单维护）/ SiteGate（全站解锁遮罩，config.gate.locked 时显示）/ KitBuilder（右下角悬浮组装面板，渲染 `kit` + `osz`：谱面集栏导入/导出 .osz，琥珀框标将被替换的根目录音效；自动展开必须经 setTimeout 延迟——dragstart 内同步改 DOM 会被 Chromium 取消拖拽）/ CadPreview（osu!cad 实时预览悬浮窗，iframe 内嵌 `static/osucad/`——该目录是 osucad 仓库 `apps/hitsound-preview` 的构建产物，由 `scripts/build-osucad-preview.sh` 生成回拷，勿手改；预览 app 源码提交在 osucad fork）/ HelpDialog（顶栏「?」与 `?` 键）/ Tour（首次访问分步引导，目标用 `data-tour` 属性标注——新增或移动被引导的元素时同步更新 `tour.ts`）
+- `src/lib/components/` — TreeView（行内改名 + 删除钮，包主/管理员可见）/ FileTable（复选框多选，行可拖入组装面板）/ WaveformCanvas / UploadDialog（新建/附加模式）/ MyPackages / AdminPanel（站点访问密码维护（管理员）+ 超管名单维护）/ SiteGate（全站解锁遮罩，config.gate.locked 时显示）/ ConnectionSettings（顶栏齿轮连接设置：API 服务器地址 + 站点密码，跨源/桌面形态唯一入口，齿轮无条件显示）/ KitBuilder（右下角悬浮组装面板，渲染 `kit` + `osz`：谱面集栏导入/导出 .osz，琥珀框标将被替换的根目录音效；自动展开必须经 setTimeout 延迟——dragstart 内同步改 DOM 会被 Chromium 取消拖拽）/ CadPreview（osu!cad 实时预览悬浮窗，iframe 内嵌 `static/osucad/`——该目录是 osucad 仓库 `apps/hitsound-preview` 的构建产物，由 `scripts/build-osucad-preview.sh` 生成回拷，勿手改；预览 app 源码提交在 osucad fork）/ HelpDialog（顶栏「?」与 `?` 键）/ Tour（首次访问分步引导，目标用 `data-tour` 属性标注——新增或移动被引导的元素时同步更新 `tour.ts`）
 - `src/lib/i18n/` — 文案集中在 `zh.ts` + `t()`（预留 en），不要在组件里写死中文
 - `schema.sql` — D1 表结构（v6：settings 站点访问密码；v4：packages.append_to 影子包）；`wrangler.toml` — Pages 构建配置 + R2/D1 bindings；`svelte.config.js` — CSP
 - 环境三件套：`.envrc`（direnv 入口）、`manifest.scm`（guix 依赖）、`pnpm-workspace.yaml`（pnpm 设置）
@@ -70,7 +71,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 - `wrangler r2 object` 线上操作必须加 `--remote`，否则写进本地模拟器；本地模拟状态在 `.wrangler/state`，schema 变更后旧库要整个重置再跑 schema.sql（CREATE IF NOT EXISTS 不会补列）
 - Pages Git 集成的构建命令在项目级 build_config（面板 Build configurations / API），wrangler.toml 不承载该字段；Node 版本钉在 `.node-version`（用大版本号如 22，勿用精确补丁号——镜像未必收录）
 - `.svelte-kit/` 是构建产物（已 gitignore）：安全扫描在其上报告的 SSRF/命令注入均为误报（那是浏览器端 bundle）
-- R2 CORS 已配 `https://*.pages.dev` 与 `http://localhost:5173`；更换上传/调试域名需同步修改
+- R2 CORS 已配 `https://*.pages.dev` 与 `http://localhost:5173`；更换上传/调试域名需同步修改。跨源 Web 前端域 / Tauri origin（`http://tauri.localhost`、`tauri://localhost`）须同时进 R2 CORS 与后端 `CORS_ORIGINS`（两项独立，缺一直连/直传失败）
 - `/api/tree` 响应带 `private, max-age=60` 浏览器缓存：改名/上传后前端必须 `cache:'reload'` 强刷（`fetchTree(true)`）；miniflare 本地模拟会像 CDN 一样缓存该响应，本地测试注意
 - pnpm 12 修改依赖后可能出现顶层 symlink 指向无 peer 后缀 key 的悬空（wrangler@x vs wrangler@x_peers）：`pnpm dedupe` 重算 lockfile 即可修复；`pnpm-workspace.yaml` 之外（如 package.json `pnpm` 字段）的设置 pnpm 12 一律忽略
 - `@sveltejs/kit` 对 typescript 的 peer 范围声明（^5||^6）落后于实际使用的 typescript 7：`pnpm peers check` 的该项 WARN 可忽略
@@ -80,7 +81,8 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 - 领域术语（包/文件夹/blob/影子包/对齐/秒传…）：`CONTEXT.md`——命名新 module、写文案与注释时沿用其中的词
 - 已定架构决策：`docs/adr/`（浏览器端打包、内容寻址 + 绝对对齐、影子包附加、只核验新 blob）——改动若与某条 ADR 冲突，先与用户确认，再新增 ADR 取代旧条目
 - 上传/附加/合并/删除/配额/去重方案：`docs/tech-proposal.md`（设计期快照，实现以代码为准）
-- 部署步骤与运维要点：`docs/deployment.md`（环境变量、schema 升级顺序、访问门运维、验证清单）
+- 部署步骤与运维要点：`docs/deployment.md`（环境变量、schema 升级顺序、访问门运维、验证清单、跨源/桌面接入顺序）
+- 前后端分离架构（跨源 Web / Tauri 桌面 × Pages API）：`docs/architecture-split.md`（API 客户端层、门 token 双轨、CORS、静态通道）；桌面打包指引：`docs/desktop.md`（frontendDist、Tauri CSP 接管、实机核查清单）
 - osucad 预览更新工作流：`docs/osucad.md`（源码以 submodule 收在 `vendor/osucad` 指向 osucad fork 的 `main`；`static/osucad/` 是提交入库的构建产物，改动须走 `scripts/build-osucad-preview.sh` 回拷 + 冒烟验证）
 - 需求口径与决策记录：`docs/requirements-consensus.md`（设计期快照，P10-P13 为 v4 增补）
 - 视觉与组件规范：`DESIGN.md`；表结构变更：`schema.sql`；CSP 与适配器：`svelte.config.js`；子请求预算与核验取舍：`src/routes/api/upload/done/+server.ts` 头注

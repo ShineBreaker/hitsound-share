@@ -26,7 +26,7 @@ flowchart TD
 1. **创建资源**
    - D1：`wrangler d1 create hitsound-share-db`（把返回的 `database_id` 填进 `wrangler.toml`）
    - R2：`wrangler r2 bucket create hitsound-files`
-2. **R2 CORS**：允许 `https://*.pages.dev` 与 `http://localhost:5173`（本地上调试用）。**更换正式域名后必须同步改 R2 CORS**，否则浏览器直传 / 预签名下载失败。
+2. **R2 CORS**：允许 `https://*.pages.dev` 与 `http://localhost:5173`（本地上调试用）。**更换正式域名后必须同步改 R2 CORS**，否则浏览器直传 / 预签名下载失败。跨源 Web 前端域 / 桌面端 origin 的追加见下文「跨源 / 桌面端接入」。
 3. **创建 Pages 项目**：Dashboard → Workers & Pages → Create → Pages → 连接 GitHub 仓库。框架预设选 SvelteKit 或留空均可，构建命令与输出目录以项目设置 / `wrangler.toml` 为准（见上）。
 4. **配置环境变量**（Settings → Variables，Production 加密变量，见下表）。
 5. **初始化线上 D1**：
@@ -52,6 +52,15 @@ flowchart TD
 **降级行为（设计如此，非故障）**：上传链路 6 个必需变量任一缺失 → `/api/config` 返回 `uploadEnabled=false` → 前端隐藏登录/上传入口，浏览/试听/下载不受影响。站点访问门未启用（无 `SITE_DEFAULT_PASSWORD` 且 D1 `settings` 无记录）→ 全站不拦。
 
 **跨源排障**：前端部署在其他域名 / 桌面端包装连不上 API（症状：请求 TypeError、空数据重试 UI）→ 先查 `CORS_ORIGINS` 是否包含前端 origin（scheme/host/port 须与浏览器地址栏完全一致）；R2 直传/直连另需 R2 桶 CORS 放行该 origin（见「一、首次部署」第 2 步）。
+
+**跨源 / 桌面端接入**（前端独立域静态部署、或 Tauri 包装消费本 API 时；架构见 [architecture-split.md](./architecture-split.md)、桌面打包见 [desktop.md](./desktop.md)）。线上配置顺序：
+
+1. Pages 环境变量加 `CORS_ORIGINS`（Production，逗号分隔）：跨源 Web 填前端域（如 `https://app.example.com`）；桌面端按目标平台加 `http://tauri.localhost`（Windows WebView2）与 `tauri://localhost`（macOS/Linux WebKitGTK）。保存即生效（每请求解析，无需重新部署代码）。
+2. **R2 桶 CORS 追加同一批 origin**（运维动作，缺一则桌面/跨源直传与直连失败）：AllowedOrigins 加前端域与两个 tauri origin（R2 接受任意 origin 字符串，含自定义协议）；同时核对 AllowedMethods 须含 `PUT`（上传预签名直传）与 `GET`（下载直连）；AllowedHeaders 无需新增（直传链路不带自定义 header，`x-hs-gate` 只发给 API 域）。
+3. 前端侧零配置文件：用户在应用内「连接设置」（顶栏齿轮）填 API 地址，门启用时再输站点密码（桌面首启有引导遮罩，token 落 localStorage）。
+4. 按「六、部署后验证」的跨源验证项核对；桌面实机另过 desktop.md 五节核查清单。
+
+撤销跨源能力 = 删 `CORS_ORIGINS` 变量（立即回到同源现状，无任何 CORS 头；已连接的跨源/桌面前端会失去 API 访问，属预期）。
 
 ## 三、schema 版本与升级
 
@@ -93,6 +102,9 @@ flowchart TD
 | 门启用时 `GET /api/tree`（无 cookie） | 401 `site_locked`；用初始密码 `POST /api/site-gate` 后带 cookie 访问 → 200 |
 | 浏览器整页流程 | 目录树加载、试听播放、单文件/整包下载 |
 | 配置了上传变量时 | 登录跳转 osu! OAuth 回调正常、上传对话框可用 |
+| 配置了 `CORS_ORIGINS` 时：`curl -s -i -H 'Origin: <白名单 origin>' https://<API域>/api/config` | 200，响应含 `Access-Control-Allow-Origin: <origin>`（回显原值而非 `*`）与 `Vary: Origin` |
+| 白名单 origin 的 `OPTIONS /api/tree`（无凭证） | 204 预检放行（`Allow-Methods` / `Allow-Headers: Content-Type, x-hs-gate` / `Max-Age` 全套）；非白名单 origin 不带 CORS 头 |
+| 跨源浏览器实机（Chromium/Firefox） | 连接设置配 API 地址后：门解锁 token 入效（reload 后 `gate.locked=false`）、树加载、试听 206、单文件/整包下载；跨源登录全流（Safari 不支持，ITP 拦第三方 cookie） |
 
 ## 七、本地验证环境（改 API 层后实测用）
 
@@ -108,3 +120,4 @@ pnpm build
 - ⚠️ `wrangler pages dev` 会向上级目录搜索并自动加载 `.env` 把真实密钥注入本地进程（cwd 在 `.svelte-kit/` 也会命中 `../.env`）：本地 e2e 一律在仓库外的临时目录启动，`--persist-to` 指独立状态目录，密钥只用 `-b` 传假值。
 - 本地模拟状态在 `.wrangler/state`；schema 变更后旧库要整个重置再跑 `schema.sql`（CREATE IF NOT EXISTS 不补列）。
 - 访问门在本地同样生效：`-b SITE_DEFAULT_PASSWORD=<测试值>` 模拟启用。
+- 跨源链路本地实测：`just serve-static`（:8798 静态前端，绑定 127.0.0.1 与后端 localhost 形成真实跨站）配 `just pages-dev`（:8799 后端，`-b CORS_ORIGINS=http://127.0.0.1:8798`）；一条命令端到端冒烟 `just smoke-cross-origin`（自托管后端 + 数据播种 + CDP 断言，`--keep-servers` 跑完留现场供调试），开发期 vite dev 形态另跑 `node scripts/smoke-split.mjs`。

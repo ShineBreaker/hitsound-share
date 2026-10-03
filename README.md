@@ -50,6 +50,7 @@
 - **内容寻址存储**：音频按 sha256 寻址，全站每个音效只存一份；引用计数账本自动回收不再被引用的空间，库越大、共享越省
 - **隐私友好**：谱面集导入不出浏览器，上传解包在本地完成，服务器永远只接触它需要接触的字节
 - **优雅降级**：不配置上传相关环境变量，站点就自动变成一个纯只读音效库——登录与上传入口隐藏，浏览/试听/下载照常工作
+- **前后端分离，多形态消费**：前端可独立部署到其他域名，或用 Tauri 包装成桌面客户端，连的是同一个 API——应用内齿轮配置服务器地址即可；配了站点密码门的私站，跨源/桌面端走 token 解锁
 - **osu! editor 风格 UI**：手写 CSS 橄榄绿主题、中文界面、波形可视化播放，专为长时间挑音效的场景打磨；无 UI 组件库、无外链 CDN、严格 CSP
 
 ## 谁适合用
@@ -78,9 +79,11 @@
 
 只想要一个纯浏览的只读音效站？连上传变量都不用配齐——上传入口会自动隐藏，其余功能照常。
 
+想把前端部署到独立域名、或打包成桌面客户端？后端配一个 `CORS_ORIGINS` 白名单（加 R2 桶 CORS）即可放行跨源消费；静态产物抽取与 Tauri 打包见 [docs/architecture-split.md](docs/architecture-split.md) 与 [docs/desktop.md](docs/desktop.md)。
+
 ## 开发者
 
-本项目基于 SvelteKit 5 + Cloudflare Pages（Functions）+ R2 + D1 构建。技术细节、本地开发环境与协作约定见 [AGENTS.md](AGENTS.md)，领域术语见 [CONTEXT.md](CONTEXT.md)，架构决策见 [docs/adr/](docs/adr/)。
+本项目基于 SvelteKit 5 + Cloudflare Pages（Functions）+ R2 + D1 构建。技术细节、本地开发环境与协作约定见 [AGENTS.md](AGENTS.md)，领域术语见 [CONTEXT.md](CONTEXT.md)，架构决策见 [docs/adr/](docs/adr/)，前后端分离（跨源 Web / Tauri 桌面）架构见 [docs/architecture-split.md](docs/architecture-split.md)。
 
 常用命令封装在 [justfile](justfile)：装个 `just` 后 `just` 或 `just --list` 查看，`just setup` 一键初始化本地环境，`just verify` 跑提交前门禁（单测+构建）。
 
