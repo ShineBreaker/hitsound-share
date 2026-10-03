@@ -415,7 +415,8 @@ await send('Page.addScriptToEvaluateOnNewDocument', { source: `
 
 // ── 验收 4：localStorage 预置连接配置 → vite dev 页面真实渲染树 ────────────
 await send('Page.navigate', { url: FRONT });
-await waitFor(`!!document.querySelector('.gear-btn')`, 30_000, 'vite dev 首屏渲染（顶栏齿轮）');
+// 齿轮按「桌面或已配置地址」显隐（showConnectionEntry）：同源首载不显示，用恒在的帮助钮作 shell 信号
+await waitFor(`!!document.querySelector('.help-btn')`, 30_000, 'vite dev 首屏渲染（顶栏帮助钮）');
 // 预置 base（键名 hs_api_base，读自 src/lib/api-base.svelte.ts）→ reload 生效
 await evalJs(`localStorage.setItem('hs_api_base', '${API}'); location.reload(); true`);
 await waitFor(`!!document.querySelector('.gate-mask')`, 20_000, '跨源 config 拉取后站点门遮罩出现');
@@ -472,10 +473,14 @@ await waitFor(`[...document.querySelectorAll('.tree .label')].some(el => el.text
 await waitNet((e) => e.url.startsWith(`${API}/api/tree`) && e.status === 200, 10_000, '同源 /api/tree 200（cookie 过门）', mark8799);
 const token8799 = await evalJs(`localStorage.getItem('hs_api_base') ?? ''`);
 if (token8799) fail(`:8799 origin 下 localStorage 不应有 hs_api_base（跨源配置串扰？）：${token8799}`);
+// 同源回归纯 cookie 轨（unlockSite 仅跨源存 token）：同源解锁不得落 hs_gate_token，
+// 否则音频/下载 URL 会重新附 ?hs_gate=
+const gateTok8799 = await evalJs(`localStorage.getItem('hs_gate_token')`);
+if (gateTok8799) fail(`:8799 同源解锁不应写 hs_gate_token（纯 cookie 轨回归？）：${gateTok8799}`);
 const shot8799 = '/tmp/hitsound-smoke-split-8799.png';
 await screenshot(shot8799);
 check('5-Web 同源回归(:8799)', true,
-	`直连 :8799 首页 → 同源 config locked → SiteGate 表单输密码解锁 → 树渲染「冒烟包」（cookie 轨，无 localStorage base）；截图 ${shot8799}`);
+	`直连 :8799 首页 → 同源 config locked → SiteGate 表单输密码解锁 → 树渲染「冒烟包」（cookie 轨，无 localStorage base、无 hs_gate_token）；截图 ${shot8799}`);
 
 // ── 验收 6：静态构建通道（build-static 产物静态伺服可加载）─────────────────
 // 原样产物（:8797）：CSP 按生产口径拦本地 http API（设计使然），只断言 shell 可加载、
@@ -509,14 +514,14 @@ step('静态伺服就绪：原样 :8797 + CSP 本地适配副本 :8798');
 
 // 原样产物：shell 可加载（静态 DOM + 水合无 uncaught；数据请求被生产 CSP 拦属预期）
 await send('Page.navigate', { url: `http://127.0.0.1:${STATIC_RAW_PORT}/` });
-await waitFor(`!!document.querySelector('.gear-btn')`, 20_000, '原样产物 shell 加载（顶栏齿轮）');
+await waitFor(`!!document.querySelector('.help-btn')`, 20_000, '原样产物 shell 加载（顶栏帮助钮）');
 const rawErrs = (await evalJs(`window.__errs ?? []`)) ?? [];
 if (rawErrs.length) fail(`原样产物页面 uncaught 异常：${JSON.stringify(rawErrs)}`);
 step('原样产物（:8797）：shell 加载 + 水合无 uncaught（数据被生产 CSP 拦属设计预期）');
 
 // 适配副本：预置连接配置 → 树渲染（产物跨源数据链路真实可用）
 await send('Page.navigate', { url: `http://127.0.0.1:${STATIC_ADAPTED_PORT}/` });
-await waitFor(`!!document.querySelector('.gear-btn')`, 20_000, '适配副本 shell 加载');
+await waitFor(`!!document.querySelector('.help-btn')`, 20_000, '适配副本 shell 加载');
 await evalJs(`localStorage.setItem('hs_api_base', '${API}'); localStorage.setItem('hs_gate_token', ${JSON.stringify(TOKEN)}); location.reload(); true`);
 const markAdapted = netLog.length;
 await waitFor(`[...document.querySelectorAll('.tree .label')].some(el => el.textContent.includes('冒烟包'))`, 20_000, '适配副本树渲染「冒烟包」');

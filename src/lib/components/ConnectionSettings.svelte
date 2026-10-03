@@ -1,8 +1,9 @@
 <script lang="ts">
-	// 连接设置：配置 API 服务器地址（跨源静态部署 / Tauri 桌面）与站点访问密码。
-	// 顶栏齿轮无条件可开——连接配置与上传能力正交，uploadEnabled=false 时跨源/桌面
-	// 用户恰恰最需要它。「测试并保存」成功后整页 reload（换源后整树状态重建，最简
-	// 可靠）；失败回显原因并回滚连接改动，不留半套状态在 localStorage 打死地址
+// 连接设置：配置 API 服务器地址（跨源静态部署 / Tauri 桌面）与站点访问密码。
+// 顶栏齿轮按「桌面模式或已配置地址」显示（api-base 的 showConnectionEntry）——同源
+// 网页版用不到；对可见用户而言连接配置仍与上传能力正交，uploadEnabled=false 时
+// 跨源/桌面用户恰恰最需要它。「测试并保存」成功后整页 reload（换源后整树状态重建，最简
+// 可靠）；失败回显原因并回滚连接改动，不留半套状态在 localStorage 打死地址
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
 	import { fetchConfig, unlockSite } from '$lib/api';

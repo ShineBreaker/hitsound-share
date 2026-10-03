@@ -90,6 +90,15 @@ export function needsDesktopSetup(): boolean {
 }
 
 /**
+ * 连接设置入口（顶栏齿轮）可见性：桌面模式必显（首启引导也要能打开连接设置），
+ * 或已配置服务器地址（保留修改/断开入口，不把已连接用户锁死）。
+ * 同源网页版（base 空）隐藏——纯 cookie 门轨用不到连接设置，零打扰
+ */
+export function showConnectionEntry(): boolean {
+	return isDesktopApp() || getApiBase() !== '';
+}
+
+/**
  * 统一 fetch 出口。语义按输入分派：
  *  - 绝对 http(s) URL（R2 预签名 PUT/GET）→ 原样 fetch，不加 header、不加 credentials
  *    （预签名 URL 只签了既定 headers，附加自定义头会导致签名失配 + 预检失败）；

@@ -10,6 +10,7 @@ import {
 	fetchIssuedUrl,
 	loginUrl,
 	needsDesktopSetup,
+	showConnectionEntry,
 	setApiBase,
 	clearConnection,
 	setGateToken,
@@ -199,6 +200,28 @@ describe('needsDesktopSetup（桌面首启引导遮罩判定）', () => {
 		vi.stubGlobal('__TAURI_INTERNALS__', {});
 		setApiBase('https://api.example.com');
 		expect(needsDesktopSetup()).toBe(false);
+	});
+});
+
+describe('showConnectionEntry（连接设置齿轮显隐判定）', () => {
+	it('非桌面 + base 空 → false（同源网页版隐藏，纯 cookie 门轨零打扰）', () => {
+		expect(showConnectionEntry()).toBe(false);
+	});
+
+	it('非桌面 + base 已配置 → true（保留修改/断开入口，不锁死已连接用户）', () => {
+		setApiBase('https://api.example.com');
+		expect(showConnectionEntry()).toBe(true);
+	});
+
+	it('桌面模式 + base 空 → true（首启引导也要能打开连接设置）', () => {
+		vi.stubGlobal('__TAURI_INTERNALS__', {});
+		expect(showConnectionEntry()).toBe(true);
+	});
+
+	it('桌面模式 + base 已配置 → true（已连接仍可见）', () => {
+		vi.stubGlobal('__TAURI_INTERNALS__', {});
+		setApiBase('https://api.example.com');
+		expect(showConnectionEntry()).toBe(true);
 	});
 });
 

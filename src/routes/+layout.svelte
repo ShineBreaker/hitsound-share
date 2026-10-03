@@ -10,7 +10,13 @@
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n';
 	import { fetchConfig, fetchMe, exchangeAuthCode, type Me } from '$lib/api';
-	import { apiFetch, loginUrl, setSessionToken, needsDesktopSetup } from '$lib/api-base.svelte';
+	import {
+		apiFetch,
+		loginUrl,
+		setSessionToken,
+		needsDesktopSetup,
+		showConnectionEntry
+	} from '$lib/api-base.svelte';
 	import UploadDialog from '$lib/components/UploadDialog.svelte';
 	import MyPackages from '$lib/components/MyPackages.svelte';
 	import AdminPanel from '$lib/components/AdminPanel.svelte';
@@ -121,31 +127,34 @@
 					{t('app.upload')}
 				</button>
 			{/if}
-			<!-- 连接设置入口无条件显示（连接配置与上传能力正交：后端未配齐上传变量时，
-			     跨源 Web / 桌面用户恰恰最需要配置服务器地址） -->
-			<button
-				class="help-btn gear-btn"
-				type="button"
-				title={t('conn.title')}
-				aria-label={t('conn.title')}
-				onclick={() => (showConn = true)}
-			>
-				<!-- 齿轮图标：lucide settings（ISC） -->
-				<svg
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					aria-hidden="true"
+			<!-- 连接设置入口：桌面模式（首启引导也要能打开）或已配置服务器地址（保留修改/断开
+			     入口，不锁死已连接用户）；同源网页版隐藏——纯 cookie 门轨用不到连接配置。
+			     可见性与上传能力仍正交：跨源/桌面用户在 uploadEnabled=false 时恰恰最需要它 -->
+			{#if showConnectionEntry()}
+				<button
+					class="help-btn gear-btn"
+					type="button"
+					title={t('conn.title')}
+					aria-label={t('conn.title')}
+					onclick={() => (showConn = true)}
 				>
-					<path
-						d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-					/>
-					<circle cx="12" cy="12" r="3" />
-				</svg>
-			</button>
+					<!-- 齿轮图标：lucide settings（ISC） -->
+					<svg
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path
+							d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+						/>
+						<circle cx="12" cy="12" r="3" />
+					</svg>
+				</button>
+			{/if}
 			<!-- 帮助入口始终显示（上传未启用时也不例外） -->
 			<button
 				class="help-btn"

@@ -2,7 +2,7 @@
 // 含树构建（与后端聚合同口径）。网络出口统一走 api-base 的 apiFetch（可配 API base + 门 token）
 import type { FileRow, TreeNode, ZipManifest } from '$lib/types';
 import type { KitFile } from '$lib/kit.svelte';
-import { apiFetch, setGateToken, setSessionToken } from '$lib/api-base.svelte';
+import { apiFetch, getApiBase, setGateToken, setSessionToken } from '$lib/api-base.svelte';
 
 export interface TreePackage {
 	id: string;
@@ -69,11 +69,12 @@ export function fetchConfig(): Promise<SiteConfig> {
 }
 
 /** 解锁站点访问密码门；密码错误 reject Error('wrong_password')。
- *  响应体含 token（跨源后端下发）时存 localStorage 供 apiFetch/absoluteApiUrl 使用；
+ *  仅跨源/桌面模式（base 非空）把响应体 token 存 localStorage 供 apiFetch/absoluteApiUrl
+ *  使用——同源网页版保持纯 cookie 轨（cookie 随请求自带，音频/下载 URL 不必再附 ?hs_gate=）；
  *  旧后端无该字段则忽略，cookie 语义照旧 */
 export async function unlockSite(password: string): Promise<void> {
 	const res = await mutateJSON<{ token?: string }>('/api/site-gate', 'POST', { password });
-	if (typeof res.token === 'string') setGateToken(res.token);
+	if (typeof res.token === 'string' && getApiBase()) setGateToken(res.token);
 }
 
 /** 修改站点访问密码（管理员）；非法长度 reject Error('bad_password') */

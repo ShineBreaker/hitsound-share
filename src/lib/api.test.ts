@@ -2,8 +2,14 @@
 // 失败 resolve null 并把本批 id 逐出缓存（下次可重试）；
 // exchangeAuthCode：OAuth 交付码换会话 token（桌面端登录态 header 轨）
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fetchPeaks, buildForest, exchangeAuthCode, fetchMe } from './api';
-import { clearConnection, getSessionToken } from './api-base.svelte';
+import { fetchPeaks, buildForest, exchangeAuthCode, fetchMe, unlockSite } from './api';
+import {
+	clearConnection,
+	GATE_TOKEN_KEY,
+	getGateToken,
+	getSessionToken,
+	setApiBase
+} from './api-base.svelte';
 
 afterEach(() => {
 	vi.useRealTimers();
@@ -137,5 +143,62 @@ describe('exchangeAuthCode（OAuth 交付码落地）', () => {
 		await fetchMe();
 		expect(calls[0].url).toBe('/api/auth/me');
 		expect(new Headers(calls[0].init.headers).get('x-hs-session')).toBe('sess-7d');
+	});
+});
+
+describe('unlockSite（站点门解锁）', () => {
+	afterEach(() => {
+		clearConnection(); // api-base 模块级 $state 跨用例共享
+	});
+
+	function stubStore(): Map<string, string> {
+		const store = new Map<string, string>();
+		vi.stubGlobal('localStorage', {
+			getItem: (k: string) => store.get(k) ?? null,
+			setItem: (k: string, v: string) => void store.set(k, v),
+			removeItem: (k: string) => void store.delete(k)
+		});
+		return store;
+	}
+
+	function stubUnlock(): Array<{ url: string; init: RequestInit }> {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+			calls.push({ url, init: init ?? {} });
+			return new Response(JSON.stringify({ ok: true, token: 'tok-9.a' }), { status: 200 });
+		});
+		return calls;
+	}
+
+	it('同源（base 空）：POST /api/site-gate 带 { password }，token 不落 localStorage（纯 cookie 轨）', async () => {
+		const store = stubStore();
+		const calls = stubUnlock();
+		await unlockSite('pw-1');
+		expect(calls[0].url).toBe('/api/site-gate');
+		expect(calls[0].init.method).toBe('POST');
+		expect(JSON.parse(calls[0].init.body as string)).toEqual({ password: 'pw-1' });
+		expect(getGateToken()).toBeNull();
+		expect(store.has(GATE_TOKEN_KEY)).toBe(false);
+	});
+
+	it('跨源（base 非空）：token 存入门态与 localStorage（apiFetch / absoluteApiUrl 可用）', async () => {
+		const store = stubStore();
+		stubUnlock();
+		setApiBase('https://api.example.com');
+		await unlockSite('pw-1');
+		expect(getGateToken()).toBe('tok-9.a');
+		expect(store.get(GATE_TOKEN_KEY)).toBe('tok-9.a');
+	});
+
+	it('旧后端无 token 字段 → 忽略不报错（cookie 语义照旧）', async () => {
+		const store = stubStore();
+		setApiBase('https://api.example.com');
+		vi.stubGlobal(
+			'fetch',
+			async () => new Response(JSON.stringify({ ok: true }), { status: 200 })
+		);
+		await expect(unlockSite('pw-1')).resolves.toBeUndefined();
+		expect(getGateToken()).toBeNull();
+		expect(store.has(GATE_TOKEN_KEY)).toBe(false);
 	});
 });
