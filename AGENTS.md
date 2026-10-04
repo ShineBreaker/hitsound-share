@@ -13,6 +13,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 - `wrangler d1 execute hitsound-share-db --local --file schema.sql`：初始化本地 D1 模拟库；`--command "SQL"` 单条执行（线上操作用 `--remote`）
 - `just pages-dev`：构建产物起本地 Functions :8799（已内置临时目录+假密钥的安全姿势）；手工等价做法与原因见 `docs/deployment.md` 七节
 - `just build-static` / `just serve-static` / `just smoke-cross-origin`：纯静态产物抽取（Tauri 消费，`pnpm build:static` 等价）/ 本地起静态 :8798 / 跨源端到端冒烟——前后端分离链路见 `docs/architecture-split.md`
+- `just tauri-dev` / `just tauri-build`：Tauri 桌面开发模式 / 打包 Linux 桌面应用（deb；build 前置自动跑 build-static，日志全量在 /tmp/tauri-build.log）——桌面壳工程见 `src-tauri/` 与 `docs/desktop.md`
 - `wrangler r2 object put/get/list hitsound-files/<key> --local/--remote`：R2 对象操作（不加 `--local` 的默认仍是本地，**线上必须显式 `--remote`**）
 - pnpm 钉在 package.json 的 `packageManager`（12.3.4）；只用 pnpm，不用 npm/yarn 安装依赖
 
@@ -42,6 +43,7 @@ osu! 铺面音效（hitsound）分享站：浏览、试听（Range 流式 + 波�
 - `src/routes/+page.ts` prerender 首页 shell 省 Functions 配额；整包下载由 `+page.svelte` 拉清单后交给 `zip-save.ts`（fflate 流式 STORE）
 - `src/lib/components/` — TreeView（行内改名 + 删除钮，包主/管理员可见）/ FileTable（复选框多选，行可拖入组装面板）/ WaveformCanvas / UploadDialog（新建/附加模式）/ MyPackages / AdminPanel（站点访问密码维护（管理员）+ 超管名单维护）/ SiteGate（全站解锁遮罩，config.gate.locked 时显示）/ ConnectionSettings（顶栏齿轮连接设置：API 服务器地址 + 站点密码，跨源/桌面形态唯一入口，齿轮按「桌面模式或已配置地址」显示——同源网页版隐藏）/ KitBuilder（右下角悬浮组装面板，渲染 `kit` + `osz`：谱面集栏导入/导出 .osz，琥珀框标将被替换的根目录音效；自动展开必须经 setTimeout 延迟——dragstart 内同步改 DOM 会被 Chromium 取消拖拽）/ CadPreview（osu!cad 实时预览悬浮窗，iframe 内嵌 `static/osucad/`——该目录是 osucad 仓库 `apps/hitsound-preview` 的构建产物，由 `scripts/build-osucad-preview.sh` 生成回拷，勿手改；预览 app 源码提交在 osucad fork）/ HelpDialog（顶栏「?」与 `?` 键）/ Tour（首次访问分步引导，目标用 `data-tour` 属性标注——新增或移动被引导的元素时同步更新 `tour.ts`）
 - `src/lib/i18n/` — 文案集中在 `zh.ts` + `t()`（预留 en），不要在组件里写死中文
+- `src-tauri/` — Tauri 2 桌面壳（零命令零插件，仅装载 build-static 静态产物；CSP 接管与 `frontendDist` 配置在 `tauri.conf.json`，构建依赖 rust/webkitgtk 等进 `manifest.scm`；登录 `hs_code` 交换与打包指引见 `docs/desktop.md`）
 - `schema.sql` — D1 表结构（v6：settings 站点访问密码；v4：packages.append_to 影子包）；`wrangler.toml` — Pages 构建配置 + R2/D1 bindings；`svelte.config.js` — CSP
 - 环境三件套：`.envrc`（direnv 入口）、`manifest.scm`（guix 依赖）、`pnpm-workspace.yaml`（pnpm 设置）
 

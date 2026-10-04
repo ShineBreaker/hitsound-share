@@ -1,0 +1,23 @@
+[package]
+name = "hitsound-share"
+version = "0.1.0"
+description = "osu! hitsound 分享站桌面壳"
+edition = "2021"
+
+# 官方模板的 lib 三形态：桌面 rlib 之外连带 cdylib/staticlib，
+# 预留将来移动端打包入口，桌面构建不引入额外成本
+[lib]
+name = "hitsound_share_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+# WebKitGTK 下体积收益有限，默认优化级别换取更快的增量发布
+opt-level = 2

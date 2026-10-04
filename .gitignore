@@ -23,3 +23,7 @@ node_modules/
 
 # corepack pnpm shim 与缓存（.envrc 生成）
 .cache/
+
+# Tauri 桌面壳（src-tauri/）构建产物与生成的权限 schema
+src-tauri/target/
+src-tauri/gen/

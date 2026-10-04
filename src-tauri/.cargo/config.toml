@@ -1,0 +1,6 @@
+# guix 环境的 rustc 默认把 ELF interpreter 烧成 /gnu/store/...-glibc/ld-linux-x86-64.so.2，
+# 产出的二进制离开本机 guix store 即无法执行（deb/AppImage 分发同理）。
+# 链接期显式指定 FHS interpreter 修复：本机开发模式不受影响（webkit 等库走 direnv 注入的
+# LD_LIBRARY_PATH 解析），目标发行版上 NEEDED 库走系统路径（deb control 已声明 webkit2gtk-4.1 依赖）。
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-Wl,--dynamic-linker,/lib64/ld-linux-x86-64.so.2"]

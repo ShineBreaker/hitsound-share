@@ -103,3 +103,16 @@ osucad-release:
     @just osucad-smoke
     git add vendor/osucad static/osucad static/osucad.build-info.txt
     @echo "—— 指针与产物已暂存，git diff --cached 确认后提交"
+
+# ── 桌面端（docs/desktop.md）────────────────────────
+
+# 桌面开发模式：Tauri 壳拉起 vite dev server（beforeDevCommand 自动起 :5173）
+tauri-dev:
+    pnpm tauri dev
+
+# 桌面应用打包：静态产物（前置依赖）+ Tauri release 构建（deb；AppImage 在本环境结构性不可打包，见 docs/desktop.md 二节）
+# 日志全量落 /tmp/tauri-build.log，控制台收敛尾部 40 行；pipefail 保失败码透传
+tauri-build: build-static
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pnpm tauri build 2>&1 | tee /tmp/tauri-build.log | tail -n 40
