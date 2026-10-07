@@ -1,0 +1,17 @@
+# hitsound-share .desktop 模板（tauri.conf.json > bundle.linux.deb.desktopTemplate 指向此处）：
+# 默认模板的 Exec 不带 %u——桌面环境激活 x-scheme-handler/hitsound 时不会把 URL 作为
+# 命令行参数传进程，深链（登录回调回传 ?hs_code=）会断；本模板仅补 %u，其余同默认。
+# 同步约束：MimeType 的 scheme 与 tauri.conf.json deep-link schemes / lib.rs DEEP_LINK_SCHEME /
+# 服务端 CORS_ORIGINS 四方一致（背景见 docs/desktop.md 二节）。
+[Desktop Entry]
+Categories={{categories}}
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Exec={{exec}} %u
+Icon={{icon}}
+Name={{name}}
+StartupWMClass=hitsound-share
+Terminal=false
+Type=Application
+MimeType=x-scheme-handler/hitsound;

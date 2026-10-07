@@ -26,6 +26,13 @@
 			"csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; connect-src 'self' https: blob: ipc: http://ipc.localhost; media-src 'self' blob: https: data:; img-src 'self' https: data:; object-src 'none'; base-uri 'self'"
 		}
 	},
+	"plugins": {
+		"deep-link": {
+			"desktop": {
+				"schemes": ["hitsound"]
+			}
+		}
+	},
 	"bundle": {
 		"active": true,
 		"targets": ["deb"],
@@ -36,6 +43,11 @@
 			"icons/128x128@2x.png",
 			"icons/icon.icns",
 			"icons/icon.ico"
-		]
+		],
+		"linux": {
+			"deb": {
+				"desktopTemplate": "linux/hitsound-share.desktop"
+			}
+		}
 	}
 }

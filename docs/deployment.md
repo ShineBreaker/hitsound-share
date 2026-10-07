@@ -56,9 +56,9 @@ flowchart TD
 
 **跨源 / 桌面端接入**（前端独立域静态部署、或 Tauri 包装消费本 API 时；架构见 [architecture-split.md](./architecture-split.md)、桌面打包见 [desktop.md](./desktop.md)）。线上配置顺序：
 
-1. Pages 环境变量加 `CORS_ORIGINS`（Production，逗号分隔）：跨源 Web 填前端域（如 `https://app.example.com`）；桌面端按目标平台加 `http://tauri.localhost`（Windows WebView2）与 `tauri://localhost`（macOS/Linux WebKitGTK）。保存即生效（每请求解析，无需重新部署代码）。
-2. **R2 桶 CORS 追加同一批 origin**（运维动作，缺一则桌面/跨源直传与直连失败）：AllowedOrigins 加前端域与两个 tauri origin（R2 接受任意 origin 字符串，含自定义协议）；同时核对 AllowedMethods 须含 `PUT`（上传预签名直传）与 `GET`（下载直连）；AllowedHeaders 无需新增（直传链路不带自定义 header，`x-hs-gate` / `x-hs-session` 只发给 API 域）。
-3. 前端侧零配置文件：用户在应用内「连接设置」（顶栏齿轮按「桌面模式或已配置地址」显示，桌面首启有引导遮罩）填 API 地址，门启用时再输站点密码（跨源/桌面解锁 token 落 localStorage，同源 Web 纯 cookie 轨）。**登录**（跨源 Web / 桌面同轨）：OAuth 回调 302 回前端域时附 `?hs_code=`（60s 短时效交付码），落地页自动 `POST /api/auth/exchange` 换发会话 token 存 localStorage、此后经 `x-hs-session` 头携带——桌面 WebView 不依赖第三方 cookie；同源 Web 仍纯 cookie 轨，行为不变。
+1. Pages 环境变量加 `CORS_ORIGINS`（Production，逗号分隔）：跨源 Web 填前端域（如 `https://app.example.com`）；桌面端加三类 origin——`http://tauri.localhost`（Windows WebView2）与 `tauri://localhost`（macOS/Linux WebKitGTK，WebView 自身源，供 API fetch 跨源），**再加 `hitsound://auth`**（自定义 scheme 深链伪 origin：登录在系统浏览器完成，osu! 授权后回调 302 到它，由桌面壳 argv 回收；它只过 login/callback 的小写 origin 字符串匹配，不涉 CORS 响应头，配置口径见 desktop.md 二节）。每请求解析；**注意：实测 Pages 运行时变量按部署时刻固定，改动后须 Redeploy 才生效**（旧版本文档「保存即生效」与实测矛盾，以实测为准）。
+2. **R2 桶 CORS 追加同一批 origin**（运维动作，缺一则桌面/跨源直传与直连失败）：AllowedOrigins 加前端域与两个 tauri origin（R2 接受任意 origin 字符串，含自定义协议；**`hitsound://auth` 不需要进 R2**——它只承载登录回调，不直连 R2）；同时核对 AllowedMethods 须含 `PUT`（上传预签名直传）与 `GET`（下载直连）；AllowedHeaders 无需新增（直传链路不带自定义 header，`x-hs-gate` / `x-hs-session` 只发给 API 域）。
+3. 前端侧零配置文件：用户在应用内「连接设置」（顶栏齿轮按「桌面模式或已配置地址」显示，桌面首启有引导遮罩）填 API 地址，门启用时再输站点密码（跨源/桌面解锁 token 落 localStorage，同源 Web 纯 cookie 轨）。**登录**（跨源 Web / 桌面同轨，但最后一跳不同）：OAuth 回调 302 回前端域时附 `?hs_code=`（60s 短时效交付码），落地页自动 `POST /api/auth/exchange` 换发会话 token 存 localStorage、此后经 `x-hs-session` 头携带——桌面 WebView 不依赖第三方 cookie；同源 Web 仍纯 cookie 轨，行为不变。**桌面端授权改在系统浏览器完成**（opener 插件 `openUrl`）：回调 302 到自定义 scheme `hitsound://auth/?hs_code=…`，OS 把它作为命令行参数投递给桌面壳，壳重写为应用内 `/?hs_code=` 后走同一条 exchange——壳层实现与配置口径见 desktop.md 二节。
 4. 按「六、部署后验证」的跨源验证项核对；桌面实机另过 desktop.md 五节核查清单。
 
 撤销跨源能力 = 删 `CORS_ORIGINS` 变量（立即回到同源现状，无任何 CORS 头；已连接的跨源/桌面前端会失去 API 访问，属预期）。

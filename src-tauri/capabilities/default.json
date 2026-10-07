@@ -1,7 +1,7 @@
 {
 	"$schema": "../gen/schemas/desktop-schema.json",
 	"identifier": "default",
-	"description": "主窗口默认能力：仅 Tauri 核心默认权限，无任何插件权限（前端不消费 IPC 命令）",
+	"description": "主窗口默认能力：Tauri 核心默认权限 + opener 插件（桌面登录转跳系统浏览器，openUrl https）",
 	"windows": ["main"],
-	"permissions": ["core:default"]
+	"permissions": ["core:default", "opener:default"]
 }

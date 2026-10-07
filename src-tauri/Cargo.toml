@@ -17,6 +17,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# opener：桌面登录转跳系统浏览器完成 osu! 授权（JS 侧 openUrl）——壳唯一插件
+tauri-plugin-opener = "2"
+# single-instance：深链热投递（应用已运行时 OS 拉起第二进程）转发给首个实例并退出，
+# 登录在同一窗口内完成；无 DBus 的桌面环境自动降级为多实例（失败模式可接受）
+tauri-plugin-single-instance = { version = "2", default-features = false }
 
 [profile.release]
 # WebKitGTK 下体积收益有限，默认优化级别换取更快的增量发布

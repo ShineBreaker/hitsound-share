@@ -4,10 +4,18 @@
 // 带 x-hs-gate 门凭证（token，POST /api/site-gate 响应下发）、cookie credentials include。
 // 登录态双轨：x-hs-session 头（token，?hs_code= 交换下发，键 hs_session_token）——
 // 桌面 WebView 第三方 cookie 不可靠，与 gate token 并存互不干扰。
+// 桌面登录转系统浏览器（gotoLogin）：授权在应用外完成，回调以自定义 scheme 深链
+// （hitsound://auth/?hs_code=）由壳层 argv 捕获重写回站内，落地页走既有 exchange。
 // 依赖方向硬约束：本模块不 import 任何业务模块（api.ts 反向依赖它），避免环。
 export const API_BASE_KEY = 'hs_api_base';
 export const GATE_TOKEN_KEY = 'hs_gate_token';
 export const SESSION_TOKEN_KEY = 'hs_session_token';
+
+/** 桌面登录回调伪 origin（自定义 scheme 深链）：三处必须一致——① 本模块 loginUrl 桌面
+ *  分支填它 ② tauri.conf.json > plugins.deep-link.desktop.schemes ③ 服务端 CORS_ORIGINS
+ *  白名单。它只为过服务端白名单的小写 origin 字符串匹配：login 编进 state、callback
+ *  据此 302 回跳；302 到自定义 scheme 是浏览器顶层导航，不涉 CORS 响应头 */
+export const DESKTOP_LOGIN_ORIGIN = 'hitsound://auth';
 
 /** localStorage 读取；测试环境（node 无 localStorage）按空处理 */
 function readStored(key: string): string {
@@ -160,9 +168,10 @@ export async function fetchIssuedUrl(url: string, init?: RequestInit): Promise<R
 }
 
 /**
- * 登录入口 URL（两处整页导航共用）：base + '/api/auth/login' + query 参数
- * （gate token 存在时 hs_gate；base 非空时 hs_origin=<location.origin>，供 OAuth
- * state 编码前端来源）。MUST 用 URLSearchParams 组装——无 gate token 时
+ * 登录入口 URL（两处入口共用）：base + '/api/auth/login' + query 参数
+ * （gate token 存在时 hs_gate；base 非空时 hs_origin 声明前端来源，供 OAuth state 编码——
+ * 桌面填自定义 scheme 深链伪 origin `hitsound://auth`（授权走系统浏览器，回调由壳层
+ * argv 回收），Web 填 location.origin）。MUST 用 URLSearchParams 组装——无 gate token 时
  * （未解锁的跨源用户点登录是真实组合）手拼 '&' 会产出 '/api/auth/login&hs_origin=…'
  * 坏 URL，query 轨失效退化到 Origin 头。
  */
@@ -170,7 +179,29 @@ export function loginUrl(): string {
 	const params = new URLSearchParams();
 	const token = getGateToken();
 	if (token) params.set('hs_gate', token);
-	if (getApiBase()) params.set('hs_origin', location.origin);
+	if (getApiBase()) params.set('hs_origin', isDesktopApp() ? DESKTOP_LOGIN_ORIGIN : location.origin);
 	const q = params.toString();
 	return `${getApiBase()}/api/auth/login${q ? `?${q}` : ''}`;
+}
+
+/**
+ * 登录入口动作：桌面（Tauri）转系统浏览器完成 osu! 授权（opener 插件 openUrl）——授权页
+ * 不嵌在 WebView 内，已验证会话/密码管理器可用；浏览器完成后 OS 以
+ * `hitsound://auth/?hs_code=…` 拉起应用，壳层把 path+query 重写为 `/?hs_code=`，
+ * 落地页既有 exchange 链路换会话 token。Web：整页导航现状（同源 cookie 轨 / 跨源
+ * hs_origin 分支均不变）。openUrl 失败（无 xdg-open 等）回退 WebView 内整页导航，
+ * 不至把登录入口变成死按钮。
+ */
+export async function gotoLogin(): Promise<void> {
+	const url = loginUrl();
+	if (isDesktopApp()) {
+		try {
+			const { openUrl } = await import('@tauri-apps/plugin-opener');
+			await openUrl(url);
+			return;
+		} catch {
+			/* 走下方回退 */
+		}
+	}
+	location.href = url;
 }

@@ -5,9 +5,11 @@ import {
 	API_BASE_KEY,
 	GATE_TOKEN_KEY,
 	SESSION_TOKEN_KEY,
+	DESKTOP_LOGIN_ORIGIN,
 	apiFetch,
 	absoluteApiUrl,
 	fetchIssuedUrl,
+	gotoLogin,
 	loginUrl,
 	needsDesktopSetup,
 	showConnectionEntry,
@@ -17,6 +19,9 @@ import {
 	setSessionToken,
 	getSessionToken
 } from './api-base.svelte';
+
+// 桌面分支动态 import 的 opener 绑定：mock 成可断言的 spy（node 测试环境无 Tauri IPC）
+vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn(async () => undefined) }));
 
 let calls: Array<{ input: unknown; init?: RequestInit }>;
 
@@ -178,6 +183,56 @@ describe('loginUrl', () => {
 		const q = new URLSearchParams(loginUrl().split('?')[1]);
 		expect(q.get('hs_gate')).toBe('tok-1');
 		expect(q.get('hs_origin')).toBe('http://127.0.0.1:8798');
+	});
+
+	it('桌面模式（__TAURI_INTERNALS__）→ hs_origin 填深链伪 origin hitsound://auth', () => {
+		// 伪 origin 只为过服务端 CORS_ORIGINS 白名单的小写字符串匹配：login 编进 state、
+		// callback 据此 302 到自定义 scheme（顶层导航，不涉 CORS 响应头）；三处一致见
+		// DESKTOP_LOGIN_ORIGIN 注释（本模块 / tauri.conf.json deep-link schemes / 服务端白名单）
+		vi.stubGlobal('__TAURI_INTERNALS__', {});
+		setApiBase('https://api.example.com');
+		setGateToken('tok-1');
+		const q = new URLSearchParams(loginUrl().split('?')[1]);
+		expect(q.get('hs_origin')).toBe(DESKTOP_LOGIN_ORIGIN);
+		expect(DESKTOP_LOGIN_ORIGIN).toBe('hitsound://auth');
+		expect(q.get('hs_gate')).toBe('tok-1'); // 门凭证轨不受影响
+	});
+});
+
+describe('gotoLogin（登录入口动作）', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('Web：整页导航到 loginUrl（现状行为）', async () => {
+		vi.stubGlobal('location', { origin: 'http://127.0.0.1:8798', href: '' });
+		setApiBase('https://api.example.com');
+		await gotoLogin();
+		expect(location.href).toBe('https://api.example.com/api/auth/login?hs_origin=http%3A%2F%2F127.0.0.1%3A8798');
+	});
+
+	it('桌面：openUrl 拉起系统浏览器，且不写 location.href（不离开 WebView）', async () => {
+		const { openUrl } = await import('@tauri-apps/plugin-opener');
+		vi.mocked(openUrl).mockClear();
+		vi.stubGlobal('__TAURI_INTERNALS__', {});
+		vi.stubGlobal('location', { origin: 'tauri://localhost', href: '' });
+		setApiBase('https://api.example.com');
+		setGateToken('tok-1');
+		await gotoLogin();
+		expect(openUrl).toHaveBeenCalledWith(
+			'https://api.example.com/api/auth/login?hs_gate=tok-1&hs_origin=hitsound%3A%2F%2Fauth'
+		);
+		expect(location.href).toBe('');
+	});
+
+	it('桌面 openUrl 失败 → 回退 WebView 内整页导航（不至死按钮）', async () => {
+		const { openUrl } = await import('@tauri-apps/plugin-opener');
+		vi.mocked(openUrl).mockClear().mockRejectedValueOnce(new Error('no xdg-open'));
+		vi.stubGlobal('__TAURI_INTERNALS__', {});
+		vi.stubGlobal('location', { origin: 'tauri://localhost', href: '' });
+		setApiBase('https://api.example.com');
+		await gotoLogin();
+		expect(location.href).toBe('https://api.example.com/api/auth/login?hs_origin=hitsound%3A%2F%2Fauth');
 	});
 });
 

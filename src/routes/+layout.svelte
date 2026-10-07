@@ -11,8 +11,9 @@
 	import { t } from '$lib/i18n';
 	import { fetchConfig, fetchMe, exchangeAuthCode, type Me } from '$lib/api';
 	import {
-		apiFetch,
+		gotoLogin,
 		loginUrl,
+		isDesktopApp,
 		setSessionToken,
 		needsDesktopSetup,
 		showConnectionEntry
@@ -84,10 +85,10 @@
 		location.reload();
 	}
 
-	/** 未登录点上传 → 先走 OAuth 登录（跨源时 loginUrl 带 hs_origin 供 state 编码前端来源） */
+	/** 未登录点上传 → 先走 OAuth 登录（桌面转系统浏览器，跨源 Web 整页导航带 hs_origin） */
 	function onUploadClick(): void {
 		if (!me) {
-			location.href = loginUrl();
+			void gotoLogin();
 			return;
 		}
 		showUpload = true;
@@ -116,7 +117,19 @@
 						{t('auth.logout')}
 					</button>
 				{:else}
-					<a class="btn lg" href={loginUrl()}>{t('app.login')}</a>
+					<a
+						class="btn lg"
+						href={loginUrl()}
+						onclick={(e: MouseEvent) => {
+							// 桌面：拦下默认导航，转系统浏览器完成授权（授权页不嵌在 WebView 内）；
+							// 回调经自定义 scheme 深链 hitsound://auth/?hs_code= 由壳层回收重写回站内
+							if (!isDesktopApp()) return;
+							e.preventDefault();
+							void gotoLogin();
+						}}
+					>
+						{t('app.login')}
+					</a>
 				{/if}
 				<button
 					class="btn primary lg"

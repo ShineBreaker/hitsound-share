@@ -90,11 +90,11 @@ cookie SameSite 统一口径：`hs_session` / `hs_gate` / `hs_oauth_state` 三�
 
 ### 3.3 桌面端边界（全功能支持）
 
-桌面（Tauri WebView，origin `tauri://localhost` / `http://tauri.localhost`）**功能面与 Web 版一致**：登录、上传、改名、删除、管理全量可用。第三方 cookie 在自定义协议 origin 上不可靠，故登录态不走 cookie 轨——OAuth 回调 302 到前端域时以 `?hs_code=` 交付短时效码，前端交换为会话 token 存 localStorage，此后经 `x-hs-session` 头携带（见 3.2，跨源 Web 与桌面同一套 code 交换；WebView 内整页导航与将来 Tauri deep-link 拉起系统浏览器两种打开方式都落回这条轨，桌面壳无需额外逻辑）。浏览/试听/波形/组装/osz 导出/下载均可用；整包下载落盘强制走 Blob 兜底（`zip-save` 在桌面模式跳过 `showSaveFilePicker`——其「存在但永不 resolve」会永久 pending），实机核查项见 desktop.md 五节。前提运维：后端 `CORS_ORIGINS` 与 R2 桶 CORS 都须含桌面 origin（desktop.md 四节）。
+桌面（Tauri WebView，origin `tauri://localhost` / `http://tauri.localhost`）**功能面与 Web 版一致**：登录、上传、改名、删除、管理全量可用。第三方 cookie 在自定义协议 origin 上不可靠，故登录态不走 cookie 轨——OAuth 回调 302 到前端域时以 `?hs_code=` 交付短时效码，前端交换为会话 token 存 localStorage，此后经 `x-hs-session` 头携带（见 3.2，跨源 Web 与桌面同一套 code 交换）。**桌面的授权在系统浏览器完成**（opener 插件 `openUrl`，授权页不嵌 WebView）：回调 302 到自定义 scheme `hitsound://auth/?hs_code=…`，OS 把它作为命令行参数投递给桌面壳，壳重写为应用内 `/?hs_code=` 后走同一条 exchange——壳层实现、`%u`/MimeType 配置口径与四方同步约束见 desktop.md 二/六节。浏览/试听/波形/组装/osz 导出/下载均可用；整包下载落盘强制走 Blob 兜底（`zip-save` 在桌面模式跳过 `showSaveFilePicker`——其「存在但永不 resolve」会永久 pending），实机核查项见 desktop.md 五节。前提运维：后端 `CORS_ORIGINS` 须含桌面 WebView 自身源 + 深链伪 origin `hitsound://auth`（R2 桶 CORS 只收 WebView 自身源，不收 `hitsound://auth`——它不直连 R2）。
 
 ## 四、CORS 设计
 
-- **白名单**：环境变量 `CORS_ORIGINS`（逗号分隔绝对 origin，如 `https://app.example.com,http://tauri.localhost`），经 `getSecrets` 读取、每请求解析不缓存；未配置 = 空 = 不启用，零行为变化。实现：`src/lib/server/cors.ts`。
+- **白名单**：环境变量 `CORS_ORIGINS`（逗号分隔绝对 origin，如 `https://app.example.com,http://tauri.localhost,hitsound://auth`），经 `getSecrets` 读取、每请求解析不缓存；未配置 = 空 = 不启用，零行为变化。白名单同时服务两件事：① 跨源 fetch 的 CORS 响应头（`http(s)` origin）；② OAuth `hs_origin`/state 尾段的 origin 匹配——login 的 `pickClientOrigin` 与 callback 的 `frontOriginFromState` 都只做小写字符串比较，故桌面深链伪 origin `hitsound://auth`（自定义 scheme，非 http）也在同一份白名单里声明；它只承载 302 回跳（顶层导航，不涉 CORS 头）。实现：`src/lib/server/cors.ts`。
 - **hooks 挂载顺序**（`src/hooks.server.ts`）：① OPTIONS 预检 204 在门判定与白名单早退**之前**（门白名单端点自身不答 OPTIONS 落 405，且预检不带 cookie 过不了门）；② 白名单命中才注入响应头——包括门 401 拒绝（否则跨源收 401 被浏览器吞成 TypeError，错误码不可读）；③ 每个带 CORS 头的响应追加 `Vary: Origin`（防共享缓存串 origin）。仅请求带 Origin 头才读 platform.env（prerenderable route 读 bindings 会被 adapter-cloudflare 抛错）。
 - **头清单**：`Allow-Origin` 回显具体 origin（**绝不 `*`**——credentials 模式下无效且不安全）、`Allow-Credentials: true`、`Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS`、`Allow-Headers: Content-Type, x-hs-gate, x-hs-session`、`Max-Age: 86400`。
 - **R2 直连另算**：预签名 PUT/GET 走 R2 桶自己的 CORS（后端白名单管不到），运维见 deployment.md。
