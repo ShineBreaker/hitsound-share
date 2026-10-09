@@ -4,16 +4,19 @@
 //   - 已核验在库（refcount > 0）的 blob 不打 R2：只比「声明大小 vs 账本大小」；
 //   - 新 blob（refcount ≤ 0）走 verifyFreshBlobs：小集合逐 blob ranged GET，
 //     大集合 list 前缀分页比大小 + 前 16 个魔数抽查（详见 lib/server/verify.ts）。
-// refcount 落账用「绝对对齐」（= 全库 visible 包引用数）：全表单语句重算——
-// 幂等、可自愈历史偏差；行写浪费（全库 blob 数）换子请求预算（分片 UPDATE 会各占一次）。
+// 核验失败的 fresh blob 是无人引用的孤儿对象：即时删 R2（不等懒清理），
+// 收敛滥用者拿预签名 URL 直传超标数据的滞留窗口。
+// refcount 落账用「绝对对齐」（= 全库 visible 包引用数），按本包 hash 集合分片重算——
+// 幂等、可自愈本包涉及行的历史偏差；行写与本包挂钩而非全库。
 // 附加模式（append_to 非空的影子包）：核验通过后事务性合并进目标包——
 // 去重三重复制行 → files 迁移 → 目标包计数重算 → 删影子包。合并批次失败可重放
 // done 自愈（影子包已 visible 时跳过核验直接重试合并）；目标失效则就地回收影子包
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUser } from '$lib/server/guard';
-import { settleAll, releasePackage } from '$lib/server/ledger';
+import { settleHashes, releasePackage } from '$lib/server/ledger';
 import { verifyFreshBlobs } from '$lib/server/verify';
+import { blobKey } from '$lib/server/media';
 import { AUDIO_EXTS, type AudioExt } from '$lib/server/upload';
 
 interface BlobAgg {
@@ -45,6 +48,12 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 		return json({ error: 'package_not_found' }, { status: 404 });
 	}
 
+	// 已 visible 且非影子包：无核验、无合并、无对齐可做——幂等短路直接作答。
+	// 不短路会让重放成为零前置成本触发账本写的放大器（D1 行写按量计费）
+	if (pkg.status === 'visible' && pkg.append_to === null) {
+		return json({ ok: true });
+	}
+
 	// 从 files 行 join 账本聚合 blob 清单（核验的 hash 列表 + 账本参照值）
 	const { results: aggRows } = await env.DB.prepare(
 		`SELECT f.blob_hash AS hash, MIN(f.format) AS ext, MAX(f.size_bytes) AS size,
@@ -67,7 +76,19 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 		// 新 blob（refcount ≤ 0）：R2 实侧核验（存在 + 大小 + 魔数）
 		const fresh = blobs.filter((b) => b.refcount <= 0);
 		bad.push(...(await verifyFreshBlobs(env.HITSOUND_FILES, fresh)));
-		if (bad.length > 0) return json({ error: 'blob_mismatch', bad }, { status: 400 });
+		if (bad.length > 0) {
+			// fresh 核验失败的 blob（refcount ≤ 0 = 无 visible 包引用）：即时删 R2，不等懒清理。
+			// 并发 pending 包若引用同 hash，同 hash 同内容语义下该对象对其同样是坏的，
+			// 其 done 核验失败重传即可（与 releasePackage 头注的良性竞态同型，账本无损）。
+			// refcount > 0 的 bad（账本不符）不删——对象可能被其他 visible 包引用中；
+			// 同 hash 异 ext 的历史对象由懒清理的 reclaimKeys 全格式兜底
+			const badSet = new Set(bad);
+			const keys = fresh.filter((b) => badSet.has(b.hash)).map((b) => blobKey(b.hash, b.ext));
+			for (let i = 0; i < keys.length; i += 1000) {
+				await env.HITSOUND_FILES.delete(keys.slice(i, i + 1000));
+			}
+			return json({ error: 'blob_mismatch', bad }, { status: 400 });
+		}
 
 		// 置 visible（重放无害——条件限定 pending 抢占，防并发双翻转窗口）
 		await env.DB.prepare(
@@ -117,8 +138,8 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 		]);
 	}
 
-	// refcount 全表绝对对齐（幂等：= 全库 visible 包引用数；单语句省子请求，行写浪费可接受）
-	await settleAll(env.DB);
+	// refcount 按本包 hash 集合分片绝对对齐（幂等：= 全库 visible 包引用数；单 batch）
+	await settleHashes(env.DB, blobs.map((b) => b.hash));
 
 	return json({ ok: true });
 };

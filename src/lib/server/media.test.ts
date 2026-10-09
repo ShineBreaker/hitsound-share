@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { parseRange, contentDisposition, blobKey } from './media';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { parseRange, contentDisposition, blobKey, queryFileBlob } from './media';
+import { createTestD1, type TestD1 } from '../../test/d1-sqlite';
 
 describe('parseRange', () => {
 	const SIZE = 500;
@@ -67,5 +68,47 @@ describe('blobKey', () => {
 		expect(blobKey('ab12'.padEnd(64, '0'), 'wav')).toBe(
 			`blobs/ab/${'ab12'.padEnd(64, '0')}.wav`
 		);
+	});
+});
+
+describe('queryFileBlob', () => {
+	let d1: TestD1;
+	const HASH = 'ab'.padEnd(64, '0');
+
+	beforeEach(async () => {
+		d1 = createTestD1();
+		await d1.db
+			.prepare('INSERT INTO packages (id, name, size_bytes, logical_size, file_count) VALUES (?1, ?2, 0, 0, 0)')
+			.bind('pkg-1', 'p')
+			.run();
+		await d1.db
+			.prepare('INSERT INTO blobs (hash, size, mime, refcount) VALUES (?1, ?2, ?3, 1)')
+			.bind(HASH, 500, 'audio/wav')
+			.run();
+	});
+
+	it('返回 hash/mime/原始名 + files.size_bytes 尺寸（供调用方免 R2 head）', async () => {
+		await d1.db
+			.prepare(
+				`INSERT INTO files (id, package_id, folder_path, name, format, size_bytes, blob_hash)
+				 VALUES ('f1', 'pkg-1', '', 'a b#.wav', 'wav', 500, ?1)`
+			)
+			.bind(HASH)
+			.run();
+
+		const before = d1.calls;
+		const row = await queryFileBlob(d1.db, 'f1');
+		expect(row).toEqual({
+			name: 'a b#.wav',
+			hash: HASH,
+			format: 'wav',
+			mime: 'audio/wav',
+			size: 500
+		});
+		expect(d1.calls - before).toBe(1); // 单次行读，无额外子请求
+	});
+
+	it('id 不存在 → null', async () => {
+		expect(await queryFileBlob(d1.db, 'gone')).toBeNull();
 	});
 });

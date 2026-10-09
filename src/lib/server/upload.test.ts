@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
+import type { R2Secrets } from './env';
 import {
 	validateManifest,
 	magicOk,
+	presignPut,
+	presignGet,
 	MAX_AUDIO_BYTES,
 	MAX_ENTRIES,
 	MAX_FILE_BYTES
@@ -119,6 +122,38 @@ describe('validateManifest', () => {
 		const r = validateManifest(manifest({ entries: [entry({ peaks: [1, 'x', 2] })] }));
 		expect(r.ok).toBe(true);
 		if (r.ok) expect(r.value.entries[0].peaks).toBeNull();
+	});
+});
+
+describe('presignPut / presignGet', () => {
+	const secrets: R2Secrets = {
+		R2_ACCOUNT_ID: 'acct',
+		R2_ACCESS_KEY_ID: 'ak',
+		R2_SECRET_ACCESS_KEY: 'sk'
+	};
+
+	it('presignPut 把 content-length 按声明字节数签入签名头，时效分钟级', async () => {
+		const url = new URL(await presignPut(secrets, 'blobs/ab/abcd.wav', 12345));
+		// 签名头含 content-length：S3 按实际请求体校验，字节数不符即 403
+		expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;host');
+		expect(url.searchParams.get('X-Amz-Expires')).toBe('600');
+		expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
+		expect(url.pathname).toBe('/hitsound-files/blobs/ab/abcd.wav');
+	});
+
+	it('不同 size 产出不同签名（长度确已参与签名材料）', async () => {
+		const a = await presignPut(secrets, 'blobs/ab/abcd.wav', 1);
+		const b = await presignPut(secrets, 'blobs/ab/abcd.wav', 2);
+		expect(new URL(a).searchParams.get('X-Amz-Signature')).not.toBe(
+			new URL(b).searchParams.get('X-Amz-Signature')
+		);
+	});
+
+	it('presignGet 只签 host，时效 15 分钟', async () => {
+		const url = new URL(await presignGet(secrets, 'blobs/ab/abcd.wav'));
+		expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('host');
+		expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
+		expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
 	});
 });
 

@@ -174,7 +174,7 @@ describe('PATCH /api/package/<id>（merge=true 撞名合并）', () => {
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true, merged: true, targetId: 't', deduped: [dup] });
 
-		// 守卫(1) + 同名查靶(1) + 合并 batch(1) + settleAll(1)——本人目标免 isAdmin
+		// 守卫(1) + 同名查靶(1) + 合并 batch(1) + 分片对齐(1)——本人目标免 isAdmin
 		expect(d1.calls - before).toBeLessThanOrEqual(5);
 		// 合并补清被并包 legacy original.zip：恒 1 次 R2 delete（对象不存在时幂等 no-op）
 		expect(r2.calls.delete - r2Before).toBe(1);

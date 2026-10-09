@@ -144,6 +144,53 @@ describe('POST /api/upload/done', () => {
 		expect(r2.calls.get + r2.calls.list).toBe(0); // 完全没打 R2
 	});
 
+	it('fresh 核验失败 → 400 且坏对象即时从 R2 删除（不等懒清理）', async () => {
+		// fresh blob：R2 对象大小与声明不符（拿预签名 URL 直传了超标/错误字节的场景）
+		await addBlob(h(1), 100, 0);
+		await addBlob(h(2), 64, 0);
+		await r2.bucket.put(blobKey(h(1), 'wav'), wavBytes(50)); // 声明 100，实存 50
+		await r2.bucket.put(blobKey(h(2), 'wav'), wavBytes(64)); // 合格
+		await addPackage('pk', { status: 'pending' });
+		await addFile('pk', 'bad.wav', h(1), '', 'wav', 100);
+		await addFile('pk', 'ok.wav', h(2), '', 'wav', 64);
+
+		const res = await callDone('pk');
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string; bad: string[] };
+		expect(body.bad).toEqual([h(1)]);
+		// 只有坏对象被删；合格对象保留（成功重试路径无需重传）
+		expect(r2.keys()).not.toContain(blobKey(h(1), 'wav'));
+		expect(r2.keys()).toContain(blobKey(h(2), 'wav'));
+	});
+
+	it('committed 坏 blob 不删 R2 对象（可能被其他 visible 包引用）', async () => {
+		await addBlob(h(1), 100, 1); // committed：账本声明不符 → bad，但对象归属他人引用
+		await r2.bucket.put(blobKey(h(1), 'wav'), wavBytes(100));
+		await addPackage('pk', { status: 'pending' });
+		await addFile('pk', 'a.wav', h(1), '', 'wav', 999);
+
+		const res = await callDone('pk');
+		expect(res.status).toBe(400);
+		expect(r2.keys()).toContain(blobKey(h(1), 'wav')); // 不删
+	});
+
+	it('已 visible 且非影子包重放 → 200 幂等短路（不触发核验与账本写）', async () => {
+		await addBlob(h(1), 100, 99); // 错账：短路意味着不做对齐，保持原值
+		await addPackage('pk', { status: 'visible' });
+		await addFile('pk', 'a.wav', h(1));
+		await r2.bucket.put(blobKey(h(1), 'wav'), wavBytes(50)); // 即使对象异常也不核验
+
+		const res = await callDone('pk');
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true });
+		expect(r2.calls.get + r2.calls.list).toBe(0); // 不核验
+		const r = await db()
+			.prepare('SELECT refcount AS r FROM blobs WHERE hash = ?1')
+			.bind(h(1))
+			.first<{ r: number }>();
+		expect(r?.r).toBe(99); // 未对齐
+	});
+
 	it('附加合并：三重复制行去重 + 目标包计数重算 + 影子包删除', async () => {
 		// 目标包 T（visible，属本人）已有 a.wav(h1)、b.wav(h2)
 		await addBlob(h(1), 100, 1);

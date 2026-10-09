@@ -6,15 +6,16 @@
 // 源侧权限与 DELETE /api/files 同口径：文件级 owner（非管理员须全部本人上传，owner NULL
 // 仅管理员），任一不符 403 全不动；目标包走 requirePackageOwner + visible 非影子。
 // folder_path 全值精确匹配（substr 前缀判定，不用 LIKE）；目标已有三重相同（同路径同名同内容）
-// 的行 = 合并去重（EXISTS 恒排除候选行自身）。子请求预算：文件模式最坏路径（500 ids）恒
-// 1 + 1 + 1 次 D1——主事务单批：2×⌈500/90⌉ 选择器 + ≤⌈501/90⌉ 计数重算分片 + 1 对齐 = 19 条
-// ≤ 250；小类模式固定 5 语句单批
+// 的行 = 合并去重（EXISTS 恒排除候选行自身）。refcount 只按本次受影响 hash 集合分片对齐
+// （集合由归属查询顺带收集，零额外子请求）。子请求预算：文件模式最坏路径（500 ids）恒
+// 1 + 1 + 1 次 D1——主事务单批：2×⌈500/90⌉ 选择器 + ≤⌈501/90⌉ 计数重算分片 + ⌈去重hash/90⌉
+// 对齐分片 ≤ 250；小类模式主事务单批（语句数 = 4 + 对齐分片）
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import type { D1Database, D1PreparedStatement, D1Result } from '@cloudflare/workers-types';
 import { requirePackageOwner } from '$lib/server/guard';
 import { isAdmin } from '$lib/server/admin';
-import { selectByIds, ALIGN_ALL_REFCOUNT_SQL } from '$lib/server/ledger';
+import { selectByIds, alignRefcountStmts } from '$lib/server/ledger';
 
 const MAX_MOVE_IDS = 500;
 
@@ -115,18 +116,21 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 	}
 	const env = g.env;
 
-	// 2. 源侧归属（两模式同口径）：DISTINCT (包, owner)——非管理员须全部本人上传，
-	//    任一不符 403 全不动；全部本人则免 isAdmin 读（省一次 users 主键查询）
+	// 2. 源侧归属（两模式同口径）：DISTINCT (包, owner, hash)——非管理员须全部本人上传，
+	//    任一不符 403 全不动；全部本人则免 isAdmin 读（省一次 users 主键查询）。
+	//    blob_hash 顺带带出：候选行的 DISTINCT hash 集恰为本次 refcount 对齐的受影响集合
+	//    （含将被去重删除的行——查询时都还在），零额外子请求
 	interface SrcRow {
 		pid: string;
 		owner: number | null;
+		hash: string;
 	}
 	const srcRows: SrcRow[] = [];
 	if (fileMode) {
 		// files 别名 f：选择器列名须带前缀；package_id 供受影响包圈定
 		const ownerStmts = selectByIds(uniqueIds, 'f.id').map((s) =>
 			env.DB.prepare(
-				`SELECT DISTINCT f.package_id AS pid, f.owner_osu_id AS owner
+				`SELECT DISTINCT f.package_id AS pid, f.owner_osu_id AS owner, f.blob_hash AS hash
 				 FROM files f WHERE ${s.clause}`
 			).bind(...s.params)
 		);
@@ -138,7 +142,7 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 	} else {
 		// 小类含子树：恰为 fromFolder 或 fromFolder + '/' 前缀（substr 全值比较，'a' 不误伤 'ab'）
 		const { results } = await env.DB.prepare(
-			`SELECT DISTINCT package_id AS pid, owner_osu_id AS owner FROM files
+			`SELECT DISTINCT package_id AS pid, owner_osu_id AS owner, blob_hash AS hash FROM files
 			 WHERE package_id = ?1 AND (folder_path = ?2 OR substr(folder_path, 1, length(?2) + 1) = ?2 || '/')`
 		)
 			.bind(fromPackage, fromFolder)
@@ -160,9 +164,10 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 		}
 	}
 
-	// 4. 主事务：去重（RETURNING 收 deduped）→ 迁移 → 受影响包计数重算 → refcount 全表对齐。
-	//    去重不跑 RECLAIM / R2 删除：被丢行必有同 hash 孪生行存活于目标包（EXISTS 命中即证明），
-	//    迁移后引用只在包间挪动，构造上无 blob 归零
+	// 4. 主事务：去重（RETURNING 收 deduped）→ 迁移 → 受影响包计数重算 → refcount
+	//    按受影响 hash 集合分片对齐。去重不跑 RECLAIM / R2 删除：被丢行必有同 hash
+	//    孪生行存活于目标包（EXISTS 命中即证明），迁移后引用只在包间挪动，构造上无 blob 归零
+	const affectedHashes = [...new Set(srcRows.map((r) => r.hash))];
 	let moved = 0;
 	let deduped: string[] = [];
 	if (fileMode) {
@@ -197,7 +202,7 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 			);
 		}
 		stmts.push(...recountStmts(env.DB, [...new Set([...srcRows.map((r) => r.pid), toPackage])]));
-		stmts.push(env.DB.prepare(ALIGN_ALL_REFCOUNT_SQL));
+		stmts.push(...alignRefcountStmts(env.DB, affectedHashes));
 		// 250 语句/批分批；各批结果按语句序拼接，下标与 stmts 对齐
 		const batchRes: D1Result[] = [];
 		for (let i = 0; i < stmts.length; i += 250) {
@@ -234,7 +239,7 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 			).bind(fromPackage, fromFolder, toPackage, toFolder),
 			recountStmt(env.DB, fromPackage),
 			recountStmt(env.DB, toPackage),
-			env.DB.prepare(ALIGN_ALL_REFCOUNT_SQL)
+			...alignRefcountStmts(env.DB, affectedHashes)
 		]);
 		deduped = ((batchRes[0]?.results ?? []) as Array<{ id: string }>).map((r) => r.id);
 		moved = batchRes[1]?.meta?.changes ?? 0;

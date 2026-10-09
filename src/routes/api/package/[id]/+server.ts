@@ -3,7 +3,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requirePackageOwner } from '$lib/server/guard';
-import { releasePackage, settleAll } from '$lib/server/ledger';
+import { releasePackage, settleHashes } from '$lib/server/ledger';
 import { isAdmin } from '$lib/server/admin';
 
 /**
@@ -53,7 +53,7 @@ export const PATCH: RequestHandler = async ({ params, request, platform, cookies
 	let batchRes;
 	try {
 		batchRes = await g.env.DB.batch([
-			// 与目标包三重复制（同路径同名同内容）的行直接丢弃
+			// 与目标包三重复制（同路径同名同内容）的行直接丢弃（RETURNING 的 hash 供对齐收集）
 			g.env.DB.prepare(
 				`DELETE FROM files WHERE package_id = ?1 AND EXISTS (
 				   SELECT 1 FROM files t
@@ -61,13 +61,12 @@ export const PATCH: RequestHandler = async ({ params, request, platform, cookies
 				     AND t.folder_path = files.folder_path
 				     AND t.name = files.name
 				     AND t.blob_hash = files.blob_hash)
-				 RETURNING id`
+				 RETURNING id, blob_hash`
 			).bind(g.pkg.id, target.id),
-			// 余下条目整体迁移进目标包
-			g.env.DB.prepare('UPDATE files SET package_id = ?1 WHERE package_id = ?2').bind(
-				target.id,
-				g.pkg.id
-			),
+			// 余下条目整体迁移进目标包（被并包全部 files 行 = 去重行 ∪ 迁移行，恰划分）
+			g.env.DB.prepare(
+				'UPDATE files SET package_id = ?1 WHERE package_id = ?2 RETURNING blob_hash'
+			).bind(target.id, g.pkg.id),
 			// 目标包计数按迁移后的 files 重算（不增量累加，天然幂等）
 			g.env.DB.prepare(
 				`UPDATE packages SET
@@ -80,13 +79,17 @@ export const PATCH: RequestHandler = async ({ params, request, platform, cookies
 		]);
 	} catch {
 		// 目标包并发被删/被并：迁移 UPDATE 的 FK 违例令 batch 原子回滚（无中间态），
-		// settleAll 尚未执行无需补偿，转确定性的 409
+		// refcount 对齐尚未执行无需补偿，转确定性的 409
 		return json({ error: 'merge_target_gone' }, { status: 409 });
 	}
 
 	// 去重只减引用不归零：被丢行必有同 hash 孪生行存活于目标包（EXISTS 命中即证明），
-	// 构造上无 blob 可归零——只对齐 refcount，不跑 RECLAIM / R2 删除
-	await settleAll(g.env.DB);
+	// 构造上无 blob 可归零——只按被并包涉及 hash 对齐 refcount，不跑 RECLAIM / R2 删除
+	const mergedHashes = [
+		...(((batchRes[0]?.results ?? []) as Array<{ blob_hash: string }>).map((r) => r.blob_hash)),
+		...(((batchRes[1]?.results ?? []) as Array<{ blob_hash: string }>).map((r) => r.blob_hash))
+	];
+	await settleHashes(g.env.DB, mergedHashes);
 
 	// v4 前历史包可能残留 legacy original.zip（R2 key 与 releasePackage 同口径）：合并不走
 	// releasePackage，purge-zips 又只清点现存包行——被并包行删除后该对象再无人认领，这里

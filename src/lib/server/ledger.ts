@@ -1,7 +1,7 @@
 // Blob 账本模块：拥有 blobs 表 refcount 的完整生命周期（ADR 0002，绝对对齐口径）。
 // - 登记：reserveBlobStatements（manifest 阶段预插 refcount=0 行，files 外键前置）
 // - 秒传判定：committedHashes（refcount > 0 = 已有 done 核验过的 R2 对象，可复用）
-// - 落账：settleAll（done 的全表绝对对齐，幂等可重放）
+// - 落账：alignRefcountStmts / settleHashes（按受影响 hash 集合的绝对对齐，幂等可重放）
 // - 回收：releasePackage（包删除 / pending 懒清理共用）、releaseFiles（文件/文件夹级删除）
 //
 // releasePackage 子请求预算 ≈ 2 次 D1 + ⌈回收 key 数 / 1000⌉ 次 R2——与包大小无关的
@@ -12,14 +12,6 @@
 import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
 import { blobKey, type Env } from './media';
 import { MIME_BY_EXT, type AudioExt } from './upload';
-
-/** 全表版 refcount 对齐（done 用）：单条语句重算全部 blob——比按 hash 分片少占子请求
- *  （免费计划单请求 50 上限，大包分片 UPDATE 会各占一次），代价是每次全库行写 */
-export const ALIGN_ALL_REFCOUNT_SQL =
-	`UPDATE blobs SET refcount = (
-	   SELECT COUNT(*) FROM files f JOIN packages p ON p.id = f.package_id
-	   WHERE f.blob_hash = blobs.hash AND p.status = 'visible'
-	 )`;
 
 /** manifest 阶段的 blob 行预登记（refcount=0；同 hash 去重，OR IGNORE 幂等） */
 export function reserveBlobStatements(
@@ -61,9 +53,14 @@ export async function committedHashes(db: D1Database, hashes: string[]): Promise
 	return committed;
 }
 
-/** done 的 refcount 全表绝对对齐：单语句重算（幂等；行写浪费换子请求预算） */
-export async function settleAll(db: D1Database): Promise<void> {
-	await db.prepare(ALIGN_ALL_REFCOUNT_SQL).run();
+/** done 的 refcount 分片绝对对齐：受影响 hash 集合并入单 batch（幂等）。
+ *  行写与受影响集合挂钩而非全库 blob 数——全表版对齐在 blobs 行数被垫高后
+ *  构成可无限重放的纯写放大器（D1 行写按量计费），故收敛触达面 */
+export async function settleHashes(db: D1Database, hashes: string[]): Promise<void> {
+	const stmts = alignRefcountStmts(db, hashes);
+	for (let i = 0; i < stmts.length; i += 250) {
+		await db.batch(stmts.slice(i, i + 250));
+	}
 }
 
 /** mime → ext 反查（MIME_BY_EXT 的逆映射；历史同 hash 异 ext 对象按 mime 找回主 ext） */
@@ -151,6 +148,28 @@ export interface FileSelector {
 
 const IN_CHUNK = 90;
 
+/**
+ * 按受影响 hash 集合分片的 refcount 对齐语句（绝对口径不变：= 全库 visible 包引用数）。
+ * 每片 ≤90 个 hash（D1 单语句绑定参数上限 100，与 selectByIds 同余量）；5000 条目包
+ * ≈ 56 片仍落单批（250 语句/批），语句并入调用方 batch 不额外占子请求
+ */
+export function alignRefcountStmts(db: D1Database, hashes: string[]): D1PreparedStatement[] {
+	const unique = [...new Set(hashes)];
+	const stmts: D1PreparedStatement[] = [];
+	for (let i = 0; i < unique.length; i += IN_CHUNK) {
+		const chunk = unique.slice(i, i + IN_CHUNK);
+		stmts.push(
+			db.prepare(
+				`UPDATE blobs SET refcount = (
+				   SELECT COUNT(*) FROM files f JOIN packages p ON p.id = f.package_id
+				   WHERE f.blob_hash = blobs.hash AND p.status = 'visible'
+				 ) WHERE hash IN (${chunk.map((_, j) => `?${j + 1}`).join(', ')})`
+			).bind(...chunk)
+		);
+	}
+	return stmts;
+}
+
 /** 按文件 id 组选择器；col 供带别名的联表查询使用（如 'f.id'） */
 export function selectByIds(ids: string[], col = 'id'): FileSelector[] {
 	const out: FileSelector[] = [];
@@ -209,8 +228,8 @@ export async function releaseFiles(
 		}
 	}
 
-	// 2. 单事务：删 files → 受影响包计数器重算 → 全表 refcount 对齐 → 归零且无引用的
-	//    blob 行删除并 RETURNING 回收清单（pending 包引用被 files 存在性挡住）
+	// 2. 单事务：删 files → 受影响包计数器重算 → 被删文件涉及 hash 的 refcount 分片对齐 →
+	//    归零且无引用的 blob 行删除并 RETURNING 回收清单（pending 包引用被 files 存在性挡住）
 	const stmts: D1PreparedStatement[] = [
 		...selectors.map((s) =>
 			DB.prepare(`DELETE FROM files WHERE ${s.clause}`).bind(...s.params)
@@ -223,7 +242,7 @@ export async function releaseFiles(
 				 WHERE id = ?1`
 			).bind(pid)
 		),
-		DB.prepare(ALIGN_ALL_REFCOUNT_SQL),
+		...alignRefcountStmts(DB, [...formatsByHash.keys()]),
 		DB.prepare(RECLAIM_SQL)
 	];
 	const batchRes = await DB.batch(stmts);

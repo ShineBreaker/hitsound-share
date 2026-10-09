@@ -177,14 +177,15 @@ export const POST: RequestHandler = async ({ request, platform, cookies }) => {
 	const hashList = [...byHash.keys()];
 	const existing = await committedHashes(env.DB, hashList);
 
-	// 预签名是纯本地计算（不出网）：并发签出全部缺失 blob 的 PUT URL
+	// 预签名是纯本地计算（不出网）：并发签出全部缺失 blob 的 PUT URL——
+	// content-length 按声明 size 签入，实际 PUT 字节数被钉死在闸门口径内
 	const missing = await Promise.all(
 		[...byHash]
 			.filter(([hash]) => !existing.has(hash))
 			.map(async ([hash, entry]) => ({
 				hash,
 				ext: entry.ext as string,
-				url: await presignPut(secrets, blobKey(hash, entry.ext))
+				url: await presignPut(secrets, blobKey(hash, entry.ext), entry.size)
 			}))
 	);
 

@@ -27,10 +27,9 @@ export const GET: RequestHandler = async ({ params, platform, request }) => {
 		return new Response(null, { status: 304, headers: baseHeaders });
 	}
 
-	// head 拿对象总大小（Range 归一化需要；suffix 区间尤其依赖）
-	const head = await env.HITSOUND_FILES.head(key);
-	if (!head) return new Response('Blob missing', { status: 404 });
-	const size = head.size;
+	// 尺寸取 D1 库值（done 核验保证与 R2 对象一致），省一次 R2 head（Class B）；
+	// suffix 区间与 416 判定都依赖它；对象缺失的 404 由下方各 get 分支兜底
+	const size = row.size;
 
 	const range = parseRange(request.headers.get('range'), size);
 	if (range === 'unsatisfiable') {

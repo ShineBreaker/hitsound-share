@@ -89,9 +89,10 @@ describe('POST /api/upload：单文件上限', () => {
 		expect(await res.json()).toEqual({ error: 'file_too_large' });
 	});
 
-	it('管理员单文件 >10MB → 放行（预签名直传 URL 返回）', async () => {
+	it('管理员单文件 >10MB → 放行（预签名直传 URL 返回，content-length 按声明值签入）', async () => {
 		await setAdmin(true);
-		const res = await callUpload(body([MAX_FILE_BYTES + 1]));
+		const size = MAX_FILE_BYTES + 1;
+		const res = await callUpload(body([size]));
 		expect(res.status).toBe(200);
 		const data = await res.json();
 		expect(typeof data.packageId).toBe('string');
@@ -99,6 +100,10 @@ describe('POST /api/upload：单文件上限', () => {
 		expect(data.missing[0].url).toContain(
 			'https://acct.r2.cloudflarestorage.com/hitsound-files/blobs/'
 		);
+		// 实际 PUT 字节数被钉死在声明值（不符即 403），时效分钟级
+		const url = new URL(data.missing[0].url);
+		expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;host');
+		expect(url.searchParams.get('X-Amz-Expires')).toBe('600');
 	});
 });
 

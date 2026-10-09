@@ -311,6 +311,20 @@ describe('POST /api/files/move（文件模式）', () => {
 		expect(await pkgCounts('t')).toEqual({ c: 500, s: 5000 });
 	});
 
+	it('refcount 只对齐本次受影响 hash：移动集外的错账保持原值', async () => {
+		await addPackage('s');
+		await addPackage('t');
+		await addBlob(h(1), 100, 1); // 受影响：对齐
+		await addBlob(h(9), 100, 77); // 错账但不在移动集：分片对齐不触碰
+		const fid = await addFile('s', 'a.wav', h(1), '', 100, UID);
+		await addFile('s', 'z.wav', h(9), '', 100, UID); // 不移动
+
+		const res = await callMove({ ids: [fid], toPackage: 't', toFolder: '' });
+		expect(res.status).toBe(200);
+		expect(await refcountOf(h(1))).toBe(1);
+		expect(await refcountOf(h(9))).toBe(77);
+	});
+
 	it('同名不同 hash 并存', async () => {
 		await addPackage('s');
 		await addPackage('t');

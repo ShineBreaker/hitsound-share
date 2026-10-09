@@ -78,13 +78,18 @@ export interface FileBlobRow {
 	hash: string;
 	format: string;
 	mime: string;
+	size: number;
 }
 
-/** 查单个文件的下载信息（files join blobs：blob_hash + mime + 原始文件名） */
+/**
+ * 查单个文件的下载信息（files join blobs：blob_hash + mime + 原始文件名 + 尺寸）。
+ * size 取 files.size_bytes：done 核验强制其与 R2 对象实际大小一致，调用方
+ * （如 /f/<id> 的 Range 归一化）可直接用库值，省一次 R2 head（Class B）
+ */
 export async function queryFileBlob(db: D1Database, id: string): Promise<FileBlobRow | null> {
 	return await db
 		.prepare(
-			`SELECT f.name, f.blob_hash AS hash, f.format, b.mime
+			`SELECT f.name, f.blob_hash AS hash, f.format, b.mime, f.size_bytes AS size
 			 FROM files f JOIN blobs b ON b.hash = f.blob_hash
 			 WHERE f.id = ?1`
 		)

@@ -17,7 +17,13 @@ export const MAX_FILE_BYTES = 10 * 1024 * 1024; // 单文件 ≤10MB（管理员
 export const MAX_AUDIO_BYTES = 1024 * 1024 * 1024; // 单包音频累计 ≤1GB
 export const GLOBAL_CAP_BYTES = 10 * 1024 * 1024 * 1024; // 全局水位：R2 免费额度 10GB，写后不得超
 export const PKGS_PER_DAY = 5; // 每用户 5 包/天（管理员豁免）
-export const PENDING_TTL_H = 24; // pending 懒清理阈值
+export const PENDING_TTL_H = 6; // pending 懒清理阈值（预签名 URL 已分钟级时效，弃单可更早回收）
+
+/** 预签名 PUT 时效：直传拿到 URL 即并发执行（10MB@100KB/s 慢网约 100s），
+ *  分钟级窗口把「同一 URL 限次复用刷 Class A」的滥用面收敛掉 */
+export const PUT_EXPIRES_S = 600;
+/** 预签名 GET 时效（整包下载清单）：前端拿清单即并发拉取，15 分钟覆盖 GB 级慢网整包 */
+export const GET_EXPIRES_S = 900;
 
 export interface ManifestEntry {
 	path: string; // zip 内相对路径（服务端拆 folder/name）
@@ -127,12 +133,15 @@ export function validateManifest(body: unknown, opts: ValidateOpts = {}): Valida
 	return { ok: true, value: { name: typeof b.name === 'string' ? b.name : '', appendTo, entries } };
 }
 
-/** R2 S3 预签名（aws4fetch，SigV4 query 签名，纯本地计算不出网） */
+/** R2 S3 预签名（aws4fetch，SigV4 query 签名，纯本地计算不出网）。
+ *  signedHeaders 非 null 时随 allHeaders 一并签入（aws4fetch 默认把 content-length
+ *  列入不可签名头，allHeaders 覆盖该过滤） */
 async function presign(
 	secrets: R2Secrets,
 	method: 'PUT' | 'GET',
 	key: string,
-	expiresS: number
+	expiresS: number,
+	signedHeaders?: Record<string, string>
 ): Promise<string> {
 	const client = new AwsClient({
 		accessKeyId: secrets.R2_ACCESS_KEY_ID,
@@ -144,18 +153,28 @@ async function presign(
 	const url = new URL(
 		`https://${secrets.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/hitsound-files/${key}?X-Amz-Expires=${expiresS}`
 	);
-	const req = await client.sign(url.toString(), { method, aws: { signQuery: true } });
+	const req = await client.sign(url.toString(), {
+		method,
+		headers: signedHeaders,
+		aws: { signQuery: true, allHeaders: signedHeaders !== undefined }
+	});
 	return req.url;
 }
 
-/** 预签名 PUT URL（浏览器直传 blob；大包直传耗时长，默认 1 小时） */
-export function presignPut(secrets: R2Secrets, key: string, expiresS = 3600): Promise<string> {
-	return presign(secrets, 'PUT', key, expiresS);
+/**
+ * 预签名 PUT URL（浏览器直传 blob）。content-length 按 manifest 声明值签入签名头：
+ * S3 校验签名时按实际请求体重建 canonical request，字节数与声明不符即 403——
+ * 把单文件上限从「声明值」钉死到「实际 PUT 字节数」，防止拿 URL 直传超标数据绕过水位。
+ * 浏览器 fetch 的 body 正是 hash 对应的同一份字节（Content-Length 由浏览器自动设置），
+ * 合法上传不受影响。
+ */
+export function presignPut(secrets: R2Secrets, key: string, sizeBytes: number): Promise<string> {
+	return presign(secrets, 'PUT', key, PUT_EXPIRES_S, { 'content-length': String(sizeBytes) });
 }
 
-/** 预签名 GET URL（整包下载的浏览器直连拉取；大包耗时长，默认 1 小时） */
-export function presignGet(secrets: R2Secrets, key: string, expiresS = 3600): Promise<string> {
-	return presign(secrets, 'GET', key, expiresS);
+/** 预签名 GET URL（整包下载的浏览器直连拉取；时效见 GET_EXPIRES_S） */
+export function presignGet(secrets: R2Secrets, key: string): Promise<string> {
+	return presign(secrets, 'GET', key, GET_EXPIRES_S);
 }
 
 /** 首字节魔数核验：wav=RIFF、ogg=OggS、mp3=ID3 或 MPEG 帧同步 */

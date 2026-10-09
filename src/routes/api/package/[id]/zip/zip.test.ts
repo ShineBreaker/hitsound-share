@@ -58,12 +58,15 @@ describe('GET /api/package/<id>/zip 拉取 URL', () => {
 		expect(data.urls).toEqual({ [h(1)]: `https://api.local/api/blob/${h(1)}/wav` });
 	});
 
-	it('R2 三项 secrets 齐：仍预签名直连，不回归', async () => {
+	it('R2 三项 secrets 齐：仍预签名直连，时效 15 分钟（清单外泄后可复用窗口收敛）', async () => {
 		const res = await callZip(true);
 		expect(res.status).toBe(200);
 		const data = await res.json();
-		expect(data.urls[h(1)]).toContain(
+		const url = new URL(data.urls[h(1)]);
+		expect(url.href).toContain(
 			`https://acct.r2.cloudflarestorage.com/hitsound-files/blobs/${h(1).slice(0, 2)}/${h(1)}.wav`
 		);
+		expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
+		expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('host');
 	});
 });
