@@ -134,6 +134,18 @@ describe('GET /api/config', () => {
 		expect(data.storageUsedBytes).toBeNull();
 		expect(data.dailyPackagesUsed).toBeNull();
 	});
+
+	it('用量 SUM 走 isolate 级 TTL 缓存：60s 窗口内重复请求不再打全表聚合', async () => {
+		await addBlobRow(h(9), 10);
+		const first = await call('');
+		expect(((await first.json()) as { storageUsedBytes: number }).storageUsedBytes).toBe(10);
+
+		const before = d1.calls;
+		const second = await call(''); // 同一 D1 实例：SUM 命中缓存，仅剩门判定 1 条 SELECT
+		expect(second.status).toBe(200);
+		expect(((await second.json()) as { storageUsedBytes: number }).storageUsedBytes).toBe(10);
+		expect(d1.calls - before).toBe(1);
+	});
 });
 
 describe('GET /api/config gate.locked 三源凭证', () => {

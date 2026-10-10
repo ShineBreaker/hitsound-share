@@ -46,9 +46,46 @@ function timingSafeEqual(a: string, b: string): boolean {
 	return diff === 0;
 }
 
-/** 合法密码：4-100 字符且不全为空白（设置时校验；比对存原值不 trim） */
+/** 合法密码：8-100 字符且不全为空白（设置时校验；比对存原值不 trim）。
+ *  下限从 4 收紧到 8：解锁端点无硬防线（WAF 在账户层），弱口令爆破成本过低 */
 export function validGatePassword(pw: string): boolean {
-	return pw.length >= 4 && pw.length <= 100 && pw.trim() !== '';
+	return pw.length >= 8 && pw.length <= 100 && pw.trim() !== '';
+}
+
+// 解锁失败限速（isolate 内存，零费项）：连续失败达阈值即锁定一段时间——防爆破的软防线，
+// 跨 isolate 不共享、尽力而为；真正的硬防线是账户层 WAF rate limiting。
+// 成功解锁即清零；锁定到期后重新起算。Map 超上限时清扫已过期项防增长
+export const GATE_MAX_ATTEMPTS = 5;
+export const GATE_LOCKOUT_MS = 15 * 60_000;
+const GATE_ATTEMPTS_CAP = 8192;
+
+interface GateAttempts {
+	fails: number;
+	lockedUntil: number;
+}
+const gateAttempts = new Map<string, GateAttempts>();
+
+/** 该 IP 当前是否允许尝试解锁（锁定期内 false，不查库不验密直接 429） */
+export function gateAttemptAllowed(ip: string, now = Date.now()): boolean {
+	const a = gateAttempts.get(ip);
+	return a === undefined || a.lockedUntil <= now;
+}
+
+/** 记一次失败：连续达 GATE_MAX_ATTEMPTS 锁 GATE_LOCKOUT_MS；锁定到期后重新起算 */
+export function recordGateFailure(ip: string, now = Date.now()): void {
+	const a = gateAttempts.get(ip);
+	// 曾锁定且已到期 → 重新起算；未锁定（含锁定期内）→ 在既有计数上累计
+	const expiredLock = a !== undefined && a.lockedUntil > 0 && a.lockedUntil <= now;
+	const fails = (expiredLock ? 0 : (a?.fails ?? 0)) + 1;
+	gateAttempts.set(ip, { fails, lockedUntil: fails >= GATE_MAX_ATTEMPTS ? now + GATE_LOCKOUT_MS : 0 });
+	if (gateAttempts.size > GATE_ATTEMPTS_CAP) {
+		for (const [k, v] of gateAttempts) if (v.lockedUntil <= now) gateAttempts.delete(k);
+	}
+}
+
+/** 成功解锁：清零该 IP 的失败计数 */
+export function clearGateAttempts(ip: string): void {
+	gateAttempts.delete(ip);
 }
 
 /** 读当前门状态：库记录优先，其次环境变量初始密码，皆无 → 未启用 */

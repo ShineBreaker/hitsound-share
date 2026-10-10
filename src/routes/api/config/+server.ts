@@ -20,6 +20,10 @@ import {
 	PKGS_PER_DAY
 } from '$lib/server/upload';
 
+// 用量聚合的 isolate 级缓存（见 GET 内注释）
+const USAGE_TTL_MS = 60_000;
+const usageCache = new WeakMap<object, { value: number; at: number }>();
+
 export const GET: RequestHandler = async ({ platform, cookies, request, url }) => {
 	const secrets = getSecrets(platform);
 	const env = getEnv(platform);
@@ -40,13 +44,23 @@ export const GET: RequestHandler = async ({ platform, cookies, request, url }) =
 				secrets.SITE_DEFAULT_PASSWORD
 			)
 		);
-		const usage = await env.DB.prepare(
-			`SELECT (SELECT COALESCE(SUM(size), 0) FROM blobs)
-			      + (SELECT COALESCE(SUM(size_bytes), 0) FROM packages WHERE status = 'visible') AS used`
-		)
-			.first<{ used: number }>()
-			.catch(() => null);
-		storageUsedBytes = usage?.used ?? 0;
+		// 用量 SUM 是 blobs + visible packages 双全表聚合，而本端点在门白名单内：
+		// 脚本刷它会把 D1 行读按全表行数线性放大。isolate 级 TTL 缓存（WeakMap 按 DB
+		// 实例隔离）把上界压到「每 isolate 每分钟一次全表」——只读幂等值，水位条最多
+		// 滞后 60s；水位硬闸门仍走 upload 的实时条件 INSERT，不依赖此处展示值
+		const now = Date.now();
+		let cached = usageCache.get(env.DB);
+		if (cached === undefined || now - cached.at >= USAGE_TTL_MS) {
+			const usage = await env.DB.prepare(
+				`SELECT (SELECT COALESCE(SUM(size), 0) FROM blobs)
+				      + (SELECT COALESCE(SUM(size_bytes), 0) FROM packages WHERE status = 'visible') AS used`
+			)
+				.first<{ used: number }>()
+				.catch(() => null);
+			cached = { value: usage?.used ?? 0, at: now };
+			usageCache.set(env.DB, cached);
+		}
+		storageUsedBytes = cached.value;
 
 		const user = secrets.SESSION_SECRET
 			? await readSession(

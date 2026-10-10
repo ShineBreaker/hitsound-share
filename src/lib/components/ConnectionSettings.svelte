@@ -25,7 +25,7 @@
 	let baseInput = $state(getApiBase());
 	let pw = $state('');
 	let busy = $state(false);
-	let err = $state<'' | 'badUrl' | 'unreachable' | 'wrongPassword'>('');
+	let err = $state<'' | 'badUrl' | 'unreachable' | 'wrongPassword' | 'rate'>('');
 	let savedNotice = $state(false);
 	let gateRequired = $state(gateLocked);
 	const connected = getApiBase() !== ''; // 断开钮显隐；保存/断开后必然整页刷新，无需追踪更新
@@ -95,7 +95,8 @@
 			try {
 				await unlockSite(pw);
 			} catch (e) {
-				err = (e as Error).message === 'wrong_password' ? 'wrongPassword' : 'unreachable';
+				const msg = (e as Error).message;
+				err = msg === 'wrong_password' ? 'wrongPassword' : msg === 'too_many_attempts' ? 'rate' : 'unreachable';
 				restore(prevBase, prevToken);
 				busy = false;
 				return;
@@ -155,7 +156,9 @@
 						? t('conn.badUrl')
 						: err === 'unreachable'
 							? t('conn.unreachable')
-							: t('conn.wrongPassword')}
+							: err === 'rate'
+								? t('gate.rate')
+								: t('conn.wrongPassword')}
 				</p>
 			{:else if savedNotice}
 				<p class="msg ok">{t('conn.saved')}</p>

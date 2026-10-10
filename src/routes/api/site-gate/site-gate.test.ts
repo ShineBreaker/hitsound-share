@@ -1,11 +1,11 @@
 // POST /api/site-gate 端到端：环境变量初始密码解锁签发 cookie + 响应体下发 token；
 // Set-Cookie 的 SameSite 按跨源判定（白名单 Origin → None，其余 Lax）；
-// 错误密码 401；门未启用 404
+// 错误密码 401；连续失败达阈值 429（isolate 内存限速）；门未启用 404
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTestD1, type TestD1 } from '../../../test/d1-sqlite';
 import { createMemoryR2, type MemoryR2 } from '../../../test/r2-memory';
 import { POST } from './+server';
-import { GATE_COOKIE, getGateState, verifyUnlockValue } from '$lib/server/site-gate';
+import { GATE_COOKIE, GATE_MAX_ATTEMPTS, getGateState, verifyUnlockValue } from '$lib/server/site-gate';
 
 // 初始密码从环境变量注入（部署方在 Pages 配置；代码与测试不关心其值）
 const INIT_PW = 'init-pass-1';
@@ -15,6 +15,8 @@ let d1: TestD1;
 let r2: MemoryR2;
 let setCookie = '';
 let setOpts: Record<string, unknown> | undefined; // cookies.set 的属性参数
+// 限速计数在模块级 Map：默认每个请求注入唯一 IP，避免用例间互相污染
+let ipSeq = 0;
 
 interface CallOpts {
 	/** false = 不配 SITE_DEFAULT_PASSWORD（门未启用） */
@@ -25,14 +27,18 @@ interface CallOpts {
 	origin?: string;
 	/** 模拟环境变量 CORS_ORIGINS */
 	corsOrigins?: string;
+	/** 注入 cf-connecting-ip（限速按 IP 维度；缺省每次唯一） */
+	ip?: string;
 }
 
 function call(body: unknown, opts: CallOpts = {}): Promise<Response> {
+	ipSeq += 1;
 	return POST({
 		request: new Request('https://t.local/api/site-gate', {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
+				'cf-connecting-ip': opts.ip ?? `test-ip-${ipSeq}`,
 				...(opts.origin ? { origin: opts.origin } : {})
 			},
 			body: JSON.stringify(body)
@@ -123,5 +129,32 @@ describe('/api/site-gate 解锁', () => {
 		expect((await call({})).status).toBe(400);
 		expect((await call({ password: 123 })).status).toBe(400);
 		expect((await call({ password: INIT_PW }, { bindings: false })).status).toBe(503);
+	});
+});
+
+describe('/api/site-gate 解锁失败限速', () => {
+	it('同 IP 连续错 GATE_MAX_ATTEMPTS 次后 → 429 too_many_attempts，且不再触达 D1', async () => {
+		const ip = 'rate-e2e-1';
+		for (let i = 0; i < GATE_MAX_ATTEMPTS; i++) {
+			const r = await call({ password: 'wrong-pass-x' }, { ip });
+			expect(r.status).toBe(401);
+		}
+		const before = d1.calls;
+		const locked = await call({ password: 'wrong-pass-x' }, { ip });
+		expect(locked.status).toBe(429);
+		expect(((await locked.json()) as { error: string }).error).toBe('too_many_attempts');
+		expect(d1.calls).toBe(before); // 限速判定先于一切查询
+	});
+
+	it('成功解锁清零计数；其他 IP 不受牵连', async () => {
+		const ip = 'rate-e2e-2';
+		for (let i = 0; i < GATE_MAX_ATTEMPTS - 1; i++) {
+			await call({ password: 'wrong-pass-x' }, { ip });
+		}
+		expect((await call({ password: INIT_PW }, { ip })).status).toBe(200); // 清零
+		expect((await call({ password: 'wrong-pass-x' }, { ip })).status).toBe(401); // 从 1 起算
+
+		expect((await call({ password: 'wrong-pass-x' }, { ip: 'rate-e2e-3' })).status).toBe(401);
+		expect((await call({ password: INIT_PW })).status).toBe(200); // 唯一默认 IP：正常解锁
 	});
 });

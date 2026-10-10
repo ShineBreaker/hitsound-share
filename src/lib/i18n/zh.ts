@@ -199,10 +199,10 @@ const zh = {
 
 	// 管理员面板：站点访问密码
 	'admin.gate.title': '站点访问密码',
-	'admin.gate.placeholder': '新访问密码（4-100 字符）',
+	'admin.gate.placeholder': '新访问密码（8-100 字符）',
 	'admin.gate.save': '保存',
 	'admin.gate.changed': '访问密码已更新',
-	'admin.gate.bad': '密码需 4-100 个字符，且不能全为空白',
+	'admin.gate.bad': '密码需 8-100 个字符，且不能全为空白',
 	'admin.gate.hint': '访客需输入此密码才能进入站点；修改后已解锁的会话将全部失效（你会自动保持解锁）。',
 
 	// 连接设置（跨源静态部署 / Tauri 桌面：服务器地址 + 站点密码）
@@ -225,6 +225,7 @@ const zh = {
 	'gate.placeholder': '访问密码',
 	'gate.unlock': '解锁',
 	'gate.wrong': '密码错误',
+	'gate.rate': '尝试次数过多，请 15 分钟后再试',
 	'gate.failed': '解锁失败，请重试',
 
 	// 上传对话框

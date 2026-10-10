@@ -8,6 +8,10 @@
 -- （v4 起 original.zip 停传停存，整包下载由浏览器按 files 实时打包）
 -- v5→v6 线上变更（直接执行即可，CREATE IF NOT EXISTS）：
 --   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- v6→v7 线上变更（直接执行即可，CREATE IF NOT EXISTS）：
+--   CREATE INDEX IF NOT EXISTS idx_packages_uploader ON packages(uploader_osu_id, created_at);
+--   CREATE INDEX IF NOT EXISTS idx_packages_status_created ON packages(status, created_at);
+--   CREATE INDEX IF NOT EXISTS idx_packages_append_to ON packages(append_to);
 
 -- 站点级配置键值（当前仅 site_password_hash = sha256(盐+访问密码)，管理员改密后落库；
 -- 无记录时退回环境变量 SITE_DEFAULT_PASSWORD，两者皆无 = 门未启用）
@@ -62,3 +66,8 @@ CREATE TABLE IF NOT EXISTS files (
 
 CREATE INDEX IF NOT EXISTS idx_files_pkg_folder ON files(package_id, folder_path);
 CREATE INDEX IF NOT EXISTS idx_files_blob ON files(blob_hash);
+-- packages 高频过滤列（我的包列表 / 每日配额 COUNT / 懒清理扫描 / 影子包合并）：
+-- 无二级索引时全走全表扫描，行数随用户活动单调增长使查询线性变贵（D1 行读按量计费）
+CREATE INDEX IF NOT EXISTS idx_packages_uploader ON packages(uploader_osu_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_packages_status_created ON packages(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_packages_append_to ON packages(append_to);

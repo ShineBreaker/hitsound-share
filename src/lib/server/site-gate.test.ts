@@ -9,7 +9,12 @@ import {
 	checkGatePassword,
 	issueUnlockValue,
 	verifyUnlockValue,
-	isSiteUnlocked
+	isSiteUnlocked,
+	gateAttemptAllowed,
+	recordGateFailure,
+	clearGateAttempts,
+	GATE_MAX_ATTEMPTS,
+	GATE_LOCKOUT_MS
 } from './site-gate';
 
 let d1: TestD1;
@@ -19,13 +24,41 @@ beforeEach(() => {
 });
 
 describe('validGatePassword', () => {
-	it('4-100 字符且非全空白才合法', () => {
-		expect(validGatePassword('abcd')).toBe(true);
+	it('8-100 字符且非全空白才合法', () => {
+		expect(validGatePassword('abcdefgh')).toBe(true);
 		expect(validGatePassword('a'.repeat(100))).toBe(true);
-		expect(validGatePassword('abc')).toBe(false); // 过短
+		expect(validGatePassword('abcdefg')).toBe(false); // 过短（旧下限 4 已收紧到 8）
 		expect(validGatePassword('a'.repeat(101))).toBe(false); // 过长
 		expect(validGatePassword('   ')).toBe(false); // 全空白
 		expect(validGatePassword('')).toBe(false);
+	});
+});
+
+describe('解锁失败限速', () => {
+	it('连续失败达阈值锁定，锁定期内拒绝，到期后重新起算', () => {
+		const ip = 'rate-a';
+		expect(gateAttemptAllowed(ip, 1000)).toBe(true);
+		for (let i = 0; i < GATE_MAX_ATTEMPTS; i++) recordGateFailure(ip, 1000);
+		expect(gateAttemptAllowed(ip, 1001)).toBe(false); // 锁定中
+		expect(gateAttemptAllowed(ip, 1000 + GATE_LOCKOUT_MS)).toBe(true); // 到期放行
+		recordGateFailure(ip, 1000 + GATE_LOCKOUT_MS); // 到期后重新起算：仅 1 次
+		expect(gateAttemptAllowed(ip, 1000 + GATE_LOCKOUT_MS + 1)).toBe(true);
+	});
+
+	it('未达阈值不锁定，恰达阈值锁定', () => {
+		const ip = 'rate-b';
+		for (let i = 0; i < GATE_MAX_ATTEMPTS - 1; i++) recordGateFailure(ip, 1000);
+		expect(gateAttemptAllowed(ip, 1001)).toBe(true);
+		recordGateFailure(ip, 1001); // 第 GATE_MAX_ATTEMPTS 次失败
+		expect(gateAttemptAllowed(ip, 1002)).toBe(false);
+	});
+
+	it('成功解锁清零计数', () => {
+		const ip = 'rate-c';
+		for (let i = 0; i < GATE_MAX_ATTEMPTS - 1; i++) recordGateFailure(ip, 1000);
+		clearGateAttempts(ip);
+		recordGateFailure(ip, 1000); // 清零后从 1 起算
+		expect(gateAttemptAllowed(ip, 1001)).toBe(true);
 	});
 });
 

@@ -9,7 +9,7 @@
 
 	let pw = $state('');
 	let busy = $state(false);
-	let err = $state<'wrong' | 'failed' | ''>('');
+	let err = $state<'wrong' | 'rate' | 'failed' | ''>('');
 	let inputEl = $state<HTMLInputElement | undefined>();
 
 	onMount(() => inputEl?.focus());
@@ -22,7 +22,8 @@
 			await unlockSite(pw);
 			onunlock();
 		} catch (e) {
-			err = (e as Error).message === 'wrong_password' ? 'wrong' : 'failed';
+			const msg = (e as Error).message;
+			err = msg === 'wrong_password' ? 'wrong' : msg === 'too_many_attempts' ? 'rate' : 'failed';
 		} finally {
 			busy = false;
 		}
@@ -56,6 +57,8 @@
 		</form>
 		{#if err === 'wrong'}
 			<p class="err-text">{t('gate.wrong')}</p>
+		{:else if err === 'rate'}
+			<p class="err-text">{t('gate.rate')}</p>
 		{:else if err === 'failed'}
 			<p class="err-text">{t('gate.failed')}</p>
 		{/if}
